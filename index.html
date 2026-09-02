@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Control de Pagos – ONEDAY</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/index.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['"Plus Jakarta Sans"', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+              mono: ['"JetBrains Mono"', 'monospace'],
+            },
+            colors: {
+              'voka-blue': '#1a73e8', // Clean Google Blue
+              'voka-green': '#1e8e3e', // Clean Google Green
+              'voka-red': '#d93025', // Clean Google Red
+              'voka-amber': '#e37400',
+              'voka-gray': '#f8fafd',
+              'voka-dark-gray': '#dadce0',
+              'google-blue': {
+                50: '#e8f0fe',
+                100: '#d2e3fc',
+                500: '#1a73e8',
+                600: '#1967d2',
+                700: '#185abc',
+                800: '#174ea6',
+              },
+              'google-green': {
+                50: '#e6f4ea',
+                100: '#ceead6',
+                500: '#1e8e3e',
+                600: '#188038',
+                700: '#137333',
+                800: '#0d652d',
+              },
+              'google-amber': {
+                50: '#fef7e0',
+                100: '#feefc3',
+                500: '#f9ab00',
+                600: '#f29900',
+                700: '#e37400',
+                800: '#b06000',
+              },
+              'google-red': {
+                50: '#fce8e6',
+                100: '#fad2cf',
+                500: '#ea4335',
+                600: '#d93025',
+                700: '#c5221f',
+                800: '#b31412',
+              },
+            },
+            boxShadow: {
+              'google-sm': '0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15)',
+              'google-md': '0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15)',
+              'google-lg': '0 2px 6px 2px rgba(60,64,67,0.15), 0 8px 24px 4px rgba(60,64,67,0.12)',
+            }
+          }
+        }
+      }
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
+  }
+}
+</script>
+</head>
+<body class="bg-[#f8fafd] text-[#202124] antialiased">
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+</body>
+</html>

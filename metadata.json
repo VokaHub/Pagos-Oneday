@@ -1,0 +1,6 @@
+{
+  "name": "Control de Pagos – ONEDAY",
+  "description": "Sistema de gestión y conciliación de pagos y citas de ONEDAY.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
