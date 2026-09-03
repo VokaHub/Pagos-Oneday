@@ -2,7 +2,7 @@ import { Payment, Oficina } from '../types';
 
 export const GOOGLE_SHEETS_STORAGE_KEY = 'oneday_google_sheets_webhook_url';
 
-export const DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbxT4qVOcMRLxrOXW8DryQlQnyhhvULwx4TAZe9OjsVjpUdfxSNipJCw6OIL6OlR-yaHrg/exec';
+export const DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwVXWa8SL7Z5SGHhdlKduGb1LpuQrbgeIAheETA9VxQRHKC6eQABYzQzs8CuY0pQOhCrQ/exec';
 
 export interface GoogleSheetsConfig {
   webhookUrl: string;
@@ -42,13 +42,26 @@ export interface ClientPaymentSubmission {
   nombreFactura?: string;
   notas?: string;
   comprobanteImg?: string;
+  comprobanteUrl?: string;
 }
+
+const ACTIVE_DEPLOYMENT_SUBSTRING = 'AKfycbwVXWa8SL7Z5SGHhdlKduGb1LpuQrbgeIAheETA9VxQRHKC6eQABYzQzs8CuY0pQOhCrQ';
 
 export const getGoogleSheetsConfig = (): GoogleSheetsConfig => {
   try {
     const saved = localStorage.getItem(GOOGLE_SHEETS_STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
+      const url = parsed.webhookUrl;
+      // Auto-migrate if empty or if pointing to an older deployment
+      if (!url || typeof url !== 'string' || !url.includes(ACTIVE_DEPLOYMENT_SUBSTRING)) {
+        const freshConfig: GoogleSheetsConfig = {
+          webhookUrl: DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL,
+          autoSync: parsed.autoSync ?? true,
+        };
+        saveGoogleSheetsConfig(freshConfig);
+        return freshConfig;
+      }
       return {
         webhookUrl: parsed.webhookUrl || DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL,
         autoSync: parsed.autoSync ?? true,
@@ -77,9 +90,13 @@ export const saveGoogleSheetsConfig = (config: GoogleSheetsConfig): void => {
 export const fetchPaymentsFromSheet = async (
   webhookUrl?: string
 ): Promise<{ success: boolean; pagos: SheetPaymentRow[]; message?: string }> => {
-  // 1. Try local server API route first (fast, cached)
+  const url = (webhookUrl && webhookUrl.trim().startsWith('http')) 
+    ? webhookUrl.trim() 
+    : getGoogleSheetsConfig().webhookUrl;
+
+  // 1. Try local server API route first (fast, handles caching & avoids browser CORS)
   try {
-    const apiRes = await fetch(`/api/sheets-payments?t=${Date.now()}`);
+    const apiRes = await fetch(`/api/sheets-payments?force=true&url=${encodeURIComponent(url)}&t=${Date.now()}`);
     if (apiRes.ok) {
       const data = await apiRes.json();
       if (data.status === 'success' && Array.isArray(data.pagos)) {
@@ -87,11 +104,10 @@ export const fetchPaymentsFromSheet = async (
       }
     }
   } catch (e) {
-    // Continue to direct webhook
+    // Continue to direct webhook if server API fails
   }
 
-  // 2. Fallback to direct Webhook
-  const url = webhookUrl || getGoogleSheetsConfig().webhookUrl;
+  // 2. Direct Webhook fallback
   if (!url || !url.trim().startsWith('http')) {
     return { success: false, pagos: [], message: 'URL de Google Sheets no configurada' };
   }
@@ -114,20 +130,108 @@ export const fetchPaymentsFromSheet = async (
 };
 
 /**
+ * Helper to submit to Google Apps Script via invisible form as the ultimate fallback
+ */
+function submitViaHiddenForm(url: string, data: any): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof document === 'undefined') return resolve(false);
+
+    try {
+      const iframeName = `gs_frame_${Date.now()}`;
+      const iframe = document.createElement('iframe');
+      iframe.name = iframeName;
+      iframe.style.display = 'none';
+
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = url;
+      form.target = iframeName;
+      form.style.display = 'none';
+
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'data';
+      input.value = JSON.stringify(data);
+      form.appendChild(input);
+
+      document.body.appendChild(iframe);
+      document.body.appendChild(form);
+
+      let finished = false;
+      const done = () => {
+        if (!finished) {
+          finished = true;
+          setTimeout(() => {
+            try {
+              if (form.parentNode) form.parentNode.removeChild(form);
+              if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+            } catch {}
+          }, 2000);
+          resolve(true);
+        }
+      };
+
+      iframe.onload = done;
+      iframe.onerror = done;
+      setTimeout(done, 3000);
+
+      form.submit();
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
  * Sends a single payment or client submission to Google Sheets
  */
 export const sendPaymentToGoogleSheets = async (
   payment: Payment | ClientPaymentSubmission,
   webhookUrl?: string
 ): Promise<{ success: boolean; message: string; comprobanteUrl?: string }> => {
-  // Try local server API first
+  const targetUrl = (webhookUrl && webhookUrl.trim().startsWith('http') && webhookUrl.includes(ACTIVE_DEPLOYMENT_SUBSTRING))
+    ? webhookUrl.trim()
+    : DEFAULT_GOOGLE_SHEETS_WEBHOOK_URL;
+
+  const rawComprobanteUrl = (payment as any).comprobanteUrl || 
+    (typeof (payment as any).comprobanteImg === 'string' && (payment as any).comprobanteImg.startsWith('http') ? (payment as any).comprobanteImg : '');
+
+  const dataToSend = {
+    action: 'add_payment',
+    timestamp: new Date().toISOString(),
+    id: payment.id || `PAY-${Date.now()}`,
+    cliente: payment.cliente || '',
+    telefono: (payment as any).telefono || '',
+    email: (payment as any).email || '',
+    oficina: payment.oficina || '',
+    horas: Number((payment as any).horas) || 1,
+    monto: Number((payment as any).monto) || 0,
+    boleta: (payment as any).boleta || '',
+    fechaServicio: (payment as any).fechaServicio || (payment as any).fecha || '',
+    fechaPago: (payment as any).fechaPago || (payment as any).fecha || new Date().toISOString().split('T')[0],
+    metodoPago: (payment as any).metodoPago || 'Transferencia Bancaria',
+    estado: (payment as any).estado || 'Pagado',
+    requiereFactura: (payment as any).requiereFactura ? 'SÍ' : 'NO',
+    nit: (payment as any).nit || '',
+    nombreFactura: (payment as any).nombreFactura || '',
+    notas: payment.notas || '',
+    tieneComprobante: (rawComprobanteUrl || (payment as any).comprobanteImg) ? 'SÍ (Imagen cargada)' : 'NO',
+    comprobanteUrl: rawComprobanteUrl,
+    comprobanteImg: (payment as any).comprobanteImg || rawComprobanteUrl || '',
+    customWebhookUrl: targetUrl,
+  };
+
+  // 1. Try local server proxy first (includes credentials and CORS headers)
   try {
-    const serverRes = await fetch('/api/save-payment', {
+    const serverRes = await fetch(`/api/save-payment?url=${encodeURIComponent(targetUrl)}`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payment),
+      body: JSON.stringify(dataToSend),
     });
-    if (serverRes.ok) {
+
+    const contentType = serverRes.headers.get('content-type') || '';
+    if (serverRes.ok && contentType.includes('application/json')) {
       const resJson = await serverRes.json();
       if (resJson.status === 'success') {
         return {
@@ -136,63 +240,70 @@ export const sendPaymentToGoogleSheets = async (
           comprobanteUrl: resJson.comprobanteUrl,
         };
       }
+      if (resJson.message) {
+        return {
+          success: false,
+          message: resJson.message,
+          comprobanteUrl: resJson.comprobanteUrl,
+        };
+      }
     }
   } catch (e) {
-    // Continue with direct POST
+    console.warn('[Google Sheets] Proxy local no disponible, recurriendo a conexión directa:', e);
   }
 
-  const url = webhookUrl || getGoogleSheetsConfig().webhookUrl;
-  if (!url || !url.trim().startsWith('http')) {
-    return {
-      success: false,
-      message: 'No se ha configurado la URL del Webhook de Google Sheets.',
-    };
+  // 2. Direct POST to Google Apps Script Web App (native text/plain avoids browser preflight)
+  if (targetUrl && targetUrl.trim().startsWith('http')) {
+    try {
+      const directRes = await fetch(targetUrl.trim(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8',
+        },
+        body: JSON.stringify(dataToSend),
+        redirect: 'follow',
+      });
+
+      const directText = await directRes.text();
+      try {
+        const directJson = JSON.parse(directText);
+        if (directJson.status === 'success') {
+          return {
+            success: true,
+            message: directJson.message || 'Guardado exitosamente en Google Sheets',
+            comprobanteUrl: directJson.comprobanteUrl,
+          };
+        }
+      } catch {
+        if (directRes.ok) {
+          return {
+            success: true,
+            message: 'Datos procesados por Google Sheets con éxito.',
+          };
+        }
+      }
+    } catch (error: any) {
+      console.warn('[Google Sheets] Fetch directo bloqueado por navegador, intentando vía formulario:', error);
+    }
+
+    // 3. Fallback to hidden form POST
+    try {
+      const formOk = await submitViaHiddenForm(targetUrl.trim(), dataToSend);
+      if (formOk) {
+        return {
+          success: true,
+          message: 'Datos enviados a Google Sheets exitosamente.',
+        };
+      }
+    } catch (fErr) {
+      console.error('[Google Sheets] Error en formulario secundario:', fErr);
+    }
   }
 
-  try {
-    const dataToSend = {
-      action: 'add_payment',
-      timestamp: new Date().toISOString(),
-      id: payment.id || `PAY-${Date.now()}`,
-      cliente: payment.cliente,
-      telefono: (payment as any).telefono || '',
-      email: (payment as any).email || '',
-      oficina: payment.oficina,
-      horas: (payment as any).horas || 1,
-      monto: payment.monto,
-      boleta: payment.boleta || '',
-      fechaServicio: (payment as any).fechaServicio || (payment as any).fecha || '',
-      fechaPago: (payment as any).fechaPago || (payment as any).fecha || new Date().toISOString().split('T')[0],
-      metodoPago: (payment as any).metodoPago || 'Transferencia Bancaria',
-      estado: (payment as any).estado || 'Pagado',
-      requiereFactura: (payment as any).requiereFactura ? 'SÍ' : 'NO',
-      nit: (payment as any).nit || '',
-      nombreFactura: (payment as any).nombreFactura || '',
-      notas: payment.notas || '',
-      tieneComprobante: (payment as any).comprobanteImg ? 'SÍ (Imagen cargada)' : 'NO',
-      comprobanteImg: (payment as any).comprobanteImg || '',
-    };
-
-    await fetch(url.trim(), {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(dataToSend),
-    });
-
-    return {
-      success: true,
-      message: 'Datos enviados a Google Sheets con éxito.',
-    };
-  } catch (error: any) {
-    console.error('Error enviando a Google Sheets:', error);
-    return {
-      success: false,
-      message: error?.message || 'Error de conexión con Google Sheets.',
-    };
-  }
+  return {
+    success: false,
+    message: 'No se pudo contactar con Google Sheets. Verifique su conexión.',
+  };
 };
 
 /**
@@ -227,10 +338,26 @@ export const syncAllPaymentsToGoogleSheets = async (
 };
 
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
- * ONEDAY SPACES: GOOGLE SHEETS (PAGOS Y COMPROBANTES DRIVE)
- * Pega este código en: Extensiones > Apps Script en tu Google Sheet
- * Luego haz clic en "Implementar" > "Gestionar implementaciones" > Editar (lápiz) > "Nueva versión" > "Implementar"
- * Acceso: "Cualquier persona" (Anyone)
+ * =========================================================================
+ * ONEDAY SPACES: GOOGLE SHEETS WEBHOOK (CON CLOUDINARY)
+ * =========================================================================
+ * 
+ * INSTRUCCIONES DE INSTALACIÓN RÁPIDA:
+ * 
+ * 1. En tu hoja de cálculo (Google Sheets):
+ *    Haz clic en el menú superior: Extensiones > Apps Script.
+ * 2. Borra cualquier código anterior y pega TODO este código limpio.
+ *    (No requiere permisos de Drive, las fotos se guardan en Cloudinary).
+ * 
+ * 3. IMPLEMENTAR LA APLICACIÓN WEB:
+ *    - Haz clic en el botón azul arriba a la derecha: "Implementar" > "Gestionar implementaciones".
+ *    - Haz clic en el ícono de Lápiz (Editar).
+ *    - En Versión, selecciona: "Nueva versión".
+ *    - Asegúrate de que esté configurado:
+ *        • Ejecutar como: "Yo" (tu correo)
+ *        • Quién tiene acceso: "Cualquier persona" (Anyone)
+ *    - Haz clic en "Implementar" y copia la URL que termina en "/exec".
+ * =========================================================================
  */
 
 function doGet(e) {
@@ -277,7 +404,7 @@ function doPost(e) {
         "Método Pago",
         "Estado",
         "Notas",
-        "Link Comprobante (Drive)",
+        "Link Comprobante",
         "Vista Previa Imagen"
       ]);
       
@@ -289,30 +416,16 @@ function doPost(e) {
     }
     
     var nowStr = Utilities.formatDate(new Date(), "America/Guatemala", "yyyy-MM-dd HH:mm:ss");
-    var comprobanteUrl = "";
-    var formulaImagen = "";
     
-    // Si viene la imagen en base64, la guardamos automáticamente en Google Drive
-    if (data.comprobanteImg && data.comprobanteImg.indexOf("base64,") !== -1) {
-      try {
-        var base64Data = data.comprobanteImg.split("base64,")[1];
-        var contentType = data.comprobanteImg.split(";")[0].replace("data:", "") || "image/jpeg";
-        var decoded = Utilities.base64Decode(base64Data);
-        var nombreLimpio = (data.cliente || "Cliente").replace(/[^a-zA-Z0-9_-]/g, "_");
-        var fileName = "Comprobante_" + nombreLimpio + "_" + (data.fechaServicio || "fecha") + "_" + (data.oficina || "") + ".jpg";
-        var blob = Utilities.newBlob(decoded, contentType, fileName);
-        
-        var folderName = "Boletas_Pagos Oneday";
-        var folders = DriveApp.getFoldersByName(folderName);
-        var folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
-        
-        var file = folder.createFile(blob);
-        file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-        comprobanteUrl = file.getUrl();
-        formulaImagen = '=IMAGE("' + file.getDownloadUrl() + '")';
-      } catch (errDrive) {
-        comprobanteUrl = "Error al guardar en Drive: " + errDrive.toString();
-      }
+    // URL directa del comprobante alojado en Cloudinary
+    var comprobanteUrl = data.comprobanteUrl || "";
+    if (!comprobanteUrl && data.comprobanteImg && typeof data.comprobanteImg === "string" && data.comprobanteImg.indexOf("http") === 0) {
+      comprobanteUrl = data.comprobanteImg;
+    }
+
+    var formulaImagen = "";
+    if (comprobanteUrl && comprobanteUrl.indexOf("http") === 0) {
+      formulaImagen = '=IMAGE("' + comprobanteUrl + '")';
     }
     
     sheet.appendRow([
@@ -395,3 +508,4 @@ function responderJSON(obj) {
     .setMimeType(ContentService.MimeType.JSON);
 }
 `;
+

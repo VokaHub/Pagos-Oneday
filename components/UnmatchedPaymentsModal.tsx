@@ -72,16 +72,16 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-fadeIn">
             <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
                 {/* Header */}
-                <div className="px-6 py-4 bg-gradient-to-r from-amber-500 via-amber-600 to-amber-700 text-white flex items-center justify-between">
+                <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-xl bg-white/20 backdrop-blur-xs flex items-center justify-center font-bold text-lg text-white">
+                        <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-xs flex items-center justify-center font-bold text-lg text-white">
                             {unmatchedPayments.length}
                         </div>
                         <div>
                             <h2 className="text-lg font-bold tracking-tight">
                                 Pagos de Excel / Sheets Pendientes de Emparejar
                             </h2>
-                            <p className="text-xs text-amber-100">
+                            <p className="text-xs text-slate-300">
                                 Registros leídos de Excel que no coincidieron automáticamente. Empareja cada pago con su cita existente.
                             </p>
                         </div>
@@ -89,7 +89,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                     <button
                         type="button"
                         onClick={onClose}
-                        className="p-1.5 rounded-full hover:bg-white/20 text-white transition"
+                        className="p-1.5 rounded-full hover:bg-white/10 text-white transition"
                         title="Cerrar ventana"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -107,7 +107,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                                 </svg>
                             </div>
-                            <h3 className="text-base font-bold text-slate-800">¡No hay pagos pendientes!</h3>
+                            <h3 className="text-base font-bold text-slate-800">No hay pagos pendientes</h3>
                             <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
                                 Todos los pagos registrados en Excel coinciden con citas existentes o han sido conciliados exitosamente.
                             </p>
@@ -123,24 +123,27 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                         <div className="space-y-4">
                             {/* Step Indicator when picking an appointment */}
                             {selectedUnmatched && (
-                                <div className="p-4 bg-amber-50 border-2 border-amber-400 rounded-xl mb-4">
+                                <div className="p-4 bg-indigo-50 border border-indigo-200 rounded-xl mb-4">
                                     <div className="flex items-center justify-between mb-2">
-                                        <div className="flex items-center gap-2 text-amber-900 font-bold text-sm">
-                                            <span>🔗 Emparejando pago de:</span>
+                                        <div className="flex items-center gap-2 text-indigo-900 font-bold text-sm">
+                                            <svg className="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                                            </svg>
+                                            <span>Emparejando pago de:</span>
                                             <span className="underline">{selectedUnmatched.cliente}</span>
-                                            <span className="text-xs bg-amber-200 px-2 py-0.5 rounded-full">
+                                            <span className="text-xs bg-indigo-100 text-indigo-900 px-2 py-0.5 rounded-full font-semibold">
                                                 Q {Number(selectedUnmatched.monto || 0).toFixed(2)} - Of. {selectedUnmatched.oficina || 'N/A'}
                                             </span>
                                         </div>
                                         <button
                                             type="button"
                                             onClick={() => setSelectedUnmatched(null)}
-                                            className="text-xs text-amber-800 hover:text-amber-950 font-semibold underline"
+                                            className="text-xs text-indigo-700 hover:text-indigo-900 font-semibold underline"
                                         >
                                             Cancelar emparejamiento
                                         </button>
                                     </div>
-                                    <p className="text-xs text-amber-800">
+                                    <p className="text-xs text-indigo-800">
                                         Selecciona abajo la cita correspondiente a la que deseas aplicar este pago. La cita pasará inmediatamente a estado <strong>PAGADO</strong> sin alterar ni duplicar registros.
                                     </p>
 
@@ -152,7 +155,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                                 value={searchTerm}
                                                 onChange={(e) => setSearchTerm(e.target.value)}
                                                 placeholder="Buscar cita por cliente, oficina o boleta..."
-                                                className="w-full pl-8 pr-4 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                className="w-full pl-8 pr-4 py-2 text-xs bg-white border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                             />
                                             <svg className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -163,7 +166,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                                 type="checkbox"
                                                 checked={filterOnlyPending}
                                                 onChange={(e) => setFilterOnlyPending(e.target.checked)}
-                                                className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                                             />
                                             <span>Mostrar solo citas pendientes</span>
                                         </label>
@@ -196,15 +199,18 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                                         <div className="text-[11px] text-slate-500 mt-0.5 flex gap-3">
                                                             <span>Fecha servicio: {apt.fecha}</span>
                                                             <span className="font-mono font-bold text-slate-700">Q {Number(apt.monto).toFixed(2)}</span>
-                                                            {apt.telefono && <span>📞 {apt.telefono}</span>}
+                                                            {apt.telefono && <span>Tel: {apt.telefono}</span>}
                                                         </div>
                                                     </div>
                                                     <button
                                                         type="button"
                                                         onClick={() => handleConfirmMatch(apt.id)}
-                                                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1 shadow-xs"
+                                                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-xs"
                                                     >
-                                                        <span>✓ Asignar a esta cita</span>
+                                                        <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                                                        </svg>
+                                                        <span>Asignar a esta cita</span>
                                                     </button>
                                                 </div>
                                             ))
@@ -224,7 +230,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                             key={key}
                                             className={`p-4 bg-white rounded-xl border transition shadow-xs ${
                                                 isSelected
-                                                    ? 'border-amber-500 ring-2 ring-amber-400 bg-amber-50/20'
+                                                    ? 'border-indigo-500 ring-2 ring-indigo-400 bg-indigo-50/20'
                                                     : 'border-slate-200 hover:border-slate-300'
                                             }`}
                                         >
@@ -295,7 +301,7 @@ export const UnmatchedPaymentsModal: React.FC<UnmatchedPaymentsModalProps> = ({
                                                         setSelectedUnmatched(p);
                                                         setSearchTerm(p.cliente || '');
                                                     }}
-                                                    className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-lg transition shadow-xs flex items-center justify-center gap-1.5"
+                                                    className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-lg transition shadow-xs flex items-center justify-center gap-1.5"
                                                 >
                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />

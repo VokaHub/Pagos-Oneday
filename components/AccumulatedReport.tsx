@@ -379,7 +379,7 @@ const AccumulatedReport: React.FC<AccumulatedReportProps> = ({
                 <div className="bg-white p-4 rounded-2xl shadow-google-sm border border-[#dadce0] flex flex-col justify-between hover:shadow-google-md transition">
                     <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-[#5f6368] uppercase tracking-wider">Saldo Pendiente</span>
-                        <div className="w-8 h-8 rounded-full bg-amber-50 text-[#d93025] flex items-center justify-center">
+                        <div className="w-8 h-8 rounded-full bg-red-50 text-[#d93025] flex items-center justify-center">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>

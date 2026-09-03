@@ -60,7 +60,7 @@ const Header: React.FC<HeaderProps> = ({
                             </span>
                         </div>
                         <p className="text-xs text-[#5f6368] font-medium hidden sm:block">
-                            {isFocusMode ? '⚡ Modo Enfoque Activo: Cuadre Rápido' : 'Sistema Integral de Cobros y Conciliación'}
+                            {isFocusMode ? 'Modo Enfoque Activo: Cuadre Rápido' : 'Sistema Integral de Cobros y Conciliación'}
                         </p>
                     </div>
                 </div>
@@ -89,7 +89,7 @@ const Header: React.FC<HeaderProps> = ({
                             onClick={onToggleFocusMode}
                             className={`px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition flex items-center gap-1.5 shadow-xs shrink-0 ${
                                 isFocusMode
-                                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-google-sm ring-2 ring-amber-200'
+                                    ? 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-google-sm ring-2 ring-indigo-200'
                                     : 'bg-[#f1f3f4] hover:bg-[#e8eaed] text-[#3c4043]'
                             }`}
                             title="Alternar Modo Enfoque para cuadre rápido"

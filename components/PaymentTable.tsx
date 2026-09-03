@@ -95,8 +95,8 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                 );
             case EstadoPago.PlanMensual:
                 return (
-                    <span className={`${baseClasses} bg-amber-50 text-amber-800 border border-amber-200`}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-600"></span>
+                    <span className={`${baseClasses} bg-violet-50 text-violet-800 border border-violet-200`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-violet-600"></span>
                         Plan Mensual
                     </span>
                 );
@@ -205,7 +205,7 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                 return {
                     title: 'Marcar como Pendiente',
                     icon: <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>,
-                    className: 'text-amber-600 hover:text-amber-700 hover:bg-amber-50',
+                    className: 'text-rose-600 hover:text-rose-700 hover:bg-rose-50',
                 };
             default:
                 return { title: '', icon: null, className: '' };

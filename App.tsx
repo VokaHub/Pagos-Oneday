@@ -20,7 +20,8 @@ import { UnmatchedPaymentsModal } from './components/UnmatchedPaymentsModal';
 import { UnmatchedColumn } from './components/UnmatchedColumn';
 import { 
     fetchPaymentsFromSheet, 
-    SheetPaymentRow 
+    SheetPaymentRow,
+    sendPaymentToGoogleSheets
 } from './services/googleSheetsService';
 
 const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
@@ -178,69 +179,83 @@ const App: React.FC = () => {
         }
     }, [payments]);
 
+    const historyRef = useRef(history);
+    historyRef.current = history;
+    const currentIndexRef = useRef(currentHistoryIndex);
+    currentIndexRef.current = currentHistoryIndex;
+
     const setAppState = useCallback((update: (prevState: AppState) => AppState) => {
-        const newState = update(history[currentHistoryIndex]);
-        const newHistory = history.slice(0, currentHistoryIndex + 1);
-        newHistory.push(newState);
+        const prevHistory = historyRef.current;
+        const prevIndex = currentIndexRef.current;
+        const currentState = prevHistory[prevIndex] || { payments: [], accumulatedData: { total: 0, breakdown: {} } };
+        const newState = update(currentState);
+        const newHistory = [...prevHistory.slice(0, prevIndex + 1), newState];
+        historyRef.current = newHistory;
+        currentIndexRef.current = newHistory.length - 1;
         setHistory(newHistory);
         setCurrentHistoryIndex(newHistory.length - 1);
-    }, [history, currentHistoryIndex]);
+    }, []);
 
     // Normalizador de texto para emparejamiento inteligente de clientes
     const norm = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
 
     // Motor de cuadre manual: concilia las citas del archivo (tira SimplyMeet en JSON, XLSX o CSV)
-    // contra los pagos registrados en el backend de Excel (Google Sheets) y portal de clientes.
-    // Regla estricta del usuario: Los pagos de Excel que no se puedan emparejar se dejan afuera.
+    // contra los pagos registrados actualmente en el backend de Excel (Google Sheets).
+    // Si el usuario borra citas en Excel, NO se toman en cuenta. Solo lo que está en Excel al momento.
     const reconcileAppointmentsWithExcel = useCallback(async (baseAppointments: Payment[]) => {
         if (!baseAppointments || baseAppointments.length === 0) return null;
         setIsSyncing(true);
         try {
-            // 1. Obtener pagos del backend Excel / Google Sheets
+            // 1. Obtener pagos en vivo del backend Excel / Google Sheets
             const sheetRes = await fetchPaymentsFromSheet().catch(e => ({ success: false, pagos: [], message: e?.message }));
             let sheetPagos: SheetPaymentRow[] = (sheetRes.success && Array.isArray(sheetRes.pagos)) ? sheetRes.pagos : [];
 
-            // 2. Incorporar pagos enviados desde el portal de clientes (almacén local pendiente)
-            try {
-                const localSubmissionsRaw = localStorage.getItem('oneday_pending_client_submissions');
-                if (localSubmissionsRaw) {
-                    const localSubmissions: Payment[] = JSON.parse(localSubmissionsRaw);
-                    if (Array.isArray(localSubmissions)) {
-                        localSubmissions.forEach(lp => {
-                            sheetPagos.push({
-                                id: lp.id,
-                                cliente: lp.cliente,
-                                oficina: lp.oficina,
-                                horas: lp.horas,
-                                monto: lp.monto,
-                                comprobanteUrl: lp.comprobanteImg || lp.boleta,
-                                fechaServicio: lp.fecha,
-                                fechaPago: lp.fechaPago || lp.fecha,
-                                estado: lp.estado,
-                                metodoPago: lp.metodoPago || 'Transferencia Bancaria',
-                                notas: lp.notas,
+            // Si Google Sheets respondió exitosamente, sus filas son la fuente de verdad exclusiva
+            // (no agregamos registros viejos que hayan sido borrados en el Excel)
+            if (!sheetRes.success || sheetPagos.length === 0) {
+                try {
+                    const localSubmissionsRaw = localStorage.getItem('oneday_pending_client_submissions');
+                    if (localSubmissionsRaw) {
+                        const localSubmissions: Payment[] = JSON.parse(localSubmissionsRaw);
+                        if (Array.isArray(localSubmissions)) {
+                            localSubmissions.forEach(lp => {
+                                sheetPagos.push({
+                                    id: lp.id,
+                                    cliente: lp.cliente,
+                                    oficina: lp.oficina,
+                                    horas: lp.horas,
+                                    monto: lp.monto,
+                                    comprobanteUrl: lp.comprobanteImg || '',
+                                    fechaServicio: lp.fecha,
+                                    fechaPago: lp.fechaPago || lp.fecha,
+                                    estado: lp.estado,
+                                    metodoPago: lp.metodoPago || 'Transferencia Bancaria',
+                                    notas: lp.notas,
+                                });
                             });
-                        });
+                        }
                     }
+                } catch (e) {
+                    console.warn('No se pudieron leer los pagos pendientes locales:', e);
                 }
-            } catch (e) {
-                console.warn('No se pudieron leer los pagos pendientes locales:', e);
             }
 
             let matchedCount = 0;
-            const matchedSheetIds = new Set<string>();
+            // Seguimiento estricto 1 a 1 por índice de fila de Excel
+            const matchedSheetIndices = new Set<number>();
 
-            // 3. Emparejar cada cita del reporte/tira con los pagos de Excel
+            // 2. Emparejar cada cita de la tira con los pagos de Excel
             const reconciledAppointments: Payment[] = baseAppointments.map(appointment => {
                 const appClientNorm = norm(appointment.cliente);
                 const appDate = (appointment.fecha || '').split('T')[0];
                 const appOffice = appointment.oficina;
 
-                // Buscar coincidencia en Excel
-                const matchingSheetPay = sheetPagos.find((sp, idx) => {
-                    const spKey = sp.id || `${sp.cliente}-${sp.monto}-${idx}`;
-                    if (matchedSheetIds.has(spKey)) return false;
+                // Buscar coincidencia en Excel no utilizada previamente
+                let matchedIndex = -1;
+                for (let i = 0; i < sheetPagos.length; i++) {
+                    if (matchedSheetIndices.has(i)) continue;
 
+                    const sp = sheetPagos[i];
                     const spClientNorm = norm(sp.cliente);
                     const spDate = (sp.fechaServicio || '').split('T')[0];
                     const spOffice = parseOfficeFromText(sp.oficina || '');
@@ -250,13 +265,16 @@ const App: React.FC = () => {
                     const officeMatches = spOffice === appOffice;
                     const dateMatches = !spDate || spDate === appDate;
 
-                    return nameMatches && officeMatches && dateMatches;
-                });
+                    if (nameMatches && officeMatches && dateMatches) {
+                        matchedIndex = i;
+                        break;
+                    }
+                }
 
-                if (matchingSheetPay) {
-                    const spKey = matchingSheetPay.id || `${matchingSheetPay.cliente}-${matchingSheetPay.monto}`;
-                    matchedSheetIds.add(spKey);
+                if (matchedIndex !== -1) {
+                    matchedSheetIndices.add(matchedIndex);
                     matchedCount++;
+                    const matchingSheetPay = sheetPagos[matchedIndex];
                     const statusStr = (matchingSheetPay.estado || '').toLowerCase();
                     const estado = statusStr.includes('pagado') 
                         ? EstadoPago.Pagado 
@@ -265,34 +283,27 @@ const App: React.FC = () => {
                     return {
                         ...appointment,
                         estado,
-                        boleta: matchingSheetPay.comprobanteUrl || appointment.boleta || 'Comprobante Sheets',
+                        boleta: appointment.boleta || (matchingSheetPay.id ? `Ref: ${matchingSheetPay.id}` : 'Comprobante adjunto'),
                         comprobanteImg: matchingSheetPay.comprobanteUrl || appointment.comprobanteImg || undefined,
                         fechaPago: (matchingSheetPay.fechaPago || '').split('T')[0] || appDate,
-                        metodoPago: matchingSheetPay.metodoPago || 'Transferencia Bancaria',
+                        metodoPago: matchingSheetPay.metodoPago || appointment.metodoPago || 'Transferencia Bancaria',
                         revisado: estado === EstadoPago.Pagado,
                         notas: `${appointment.notas || ''} ${matchingSheetPay.notas ? `| ${matchingSheetPay.notas}` : ''}`.trim(),
                     };
                 }
 
-                // Si no se encuentra pago en Excel, la cita permanece Pendiente
+                // Si no se encuentra pago en Excel, la cita permanece tal como está (Pendiente)
                 return appointment;
             });
 
-            // "tienen que quedar afuera en el sentido de que tienen que estar en una columna o algo donde yo las pueda ver para poder emparejarlas yo"
-            // Guardamos todos los pagos de Excel que no coincidieron con ninguna cita para emparejarlos manualmente
-            const leftOverPayments = sheetPagos.filter((sp, idx) => {
-                const spKey = sp.id || `${sp.cliente}-${sp.monto}-${idx}`;
-                return !matchedSheetIds.has(spKey) && !matchedSheetIds.has(sp.id || '');
-            });
+            // 3. Pagos de Excel que no coincidieron con ninguna cita
+            const leftOverPayments = sheetPagos.filter((_, idx) => !matchedSheetIndices.has(idx));
 
             setUnmatchedPayments(leftOverPayments);
-            if (leftOverPayments.length > 0) {
-                setIsUnmatchedColumnOpen(true);
-            }
             try {
                 localStorage.setItem('oneday_unmatched_payments', JSON.stringify(leftOverPayments));
             } catch (e) {
-                console.warn('Error al guardar pagos huérfanos:', e);
+                console.warn('Error al guardar pagos no emparejados:', e);
             }
 
             setAppState(prevState => ({
@@ -302,9 +313,9 @@ const App: React.FC = () => {
 
             const unmatchedAptCount = reconciledAppointments.length - matchedCount;
             if (leftOverPayments.length > 0) {
-                setSyncFeedback(`✓ Cuadre: ${matchedCount} pagadas | ${leftOverPayments.length} pagos de Excel sin emparejar`);
+                setSyncFeedback(`Conciliacion: ${matchedCount} pagadas | ${leftOverPayments.length} pagos de Excel sin emparejar`);
             } else {
-                setSyncFeedback(`✓ Cuadre: ${matchedCount} pagadas | ${unmatchedAptCount} pendientes`);
+                setSyncFeedback(`Conciliacion: ${matchedCount} pagadas | ${unmatchedAptCount} pendientes`);
             }
             setTimeout(() => setSyncFeedback(null), 5000);
 
@@ -316,7 +327,7 @@ const App: React.FC = () => {
             };
         } catch (err: any) {
             console.error('Error en cuadre con Excel:', err);
-            setSyncFeedback('Error al cuadrar con Excel');
+            setSyncFeedback('Error al conciliar con Excel');
             setTimeout(() => setSyncFeedback(null), 4000);
             return null;
         } finally {
@@ -324,8 +335,7 @@ const App: React.FC = () => {
         }
     }, [setAppState]);
 
-    // Emparejar manualmente un pago huérfano de Excel con una cita existente
-    // "Obviamente a la hora de emparejarlas simplemente las citas que ya existen se marcan como pagadas, no se crea una nueva cita ni se borran los registros originales"
+    // Emparejar manualmente un pago de Excel con una cita existente
     const handleMatchUnmatchedPayment = useCallback((unmatched: SheetPaymentRow, appointmentId: string) => {
         setAppState(prev => {
             const updated = prev.payments.map(p => {
@@ -335,7 +345,7 @@ const App: React.FC = () => {
                     return {
                         ...p,
                         estado,
-                        boleta: unmatched.comprobanteUrl || unmatched.boleta || p.boleta || 'Comprobante Excel',
+                        boleta: p.boleta || (unmatched.id ? `Ref: ${unmatched.id}` : 'Comprobante Excel'),
                         comprobanteImg: unmatched.comprobanteUrl || p.comprobanteImg,
                         fechaPago: (unmatched.fechaPago || '').split('T')[0] || p.fecha,
                         metodoPago: unmatched.metodoPago || p.metodoPago || 'Transferencia Bancaria',
@@ -356,7 +366,7 @@ const App: React.FC = () => {
             return next;
         });
 
-        setSyncFeedback(`✓ Cita marcada como PAGADA con el comprobante de ${unmatched.cliente}`);
+        setSyncFeedback(`Cita de ${unmatched.cliente} marcada como pagada`);
         setTimeout(() => setSyncFeedback(null), 5000);
     }, [setAppState]);
 
@@ -370,18 +380,18 @@ const App: React.FC = () => {
         });
     }, []);
 
-    // Botón manual de conciliar / cruzar citas con Excel bajo demanda
+    // Conciliar / cruzar citas con Excel bajo demanda
     const syncWithGoogleSheets = useCallback(async () => {
         if (payments.length === 0) {
-            alert("No hay citas en la tabla para cruzar. Primero use el botón 'Importar Citas' para cargar el archivo.");
+            alert("No hay citas en la tabla para cruzar. Primero use el boton 'Importar / Añadir' para cargar el archivo.");
             return;
         }
         const result = await reconcileAppointmentsWithExcel(payments);
         if (result) {
             const extraMsg = result.unmatchedExcelCount > 0 
-                ? `\n• Pagos de Excel sin emparejar: ${result.unmatchedExcelCount} (abiertos en la columna lateral para arrastrar y soltar)`
-                : '\n• Todos los pagos de Excel cuadraron con las citas.';
-            alert(`✓ Cuadre con Excel finalizado:\n• Total citas: ${result.total}\n• Citas emparejadas como Pagadas: ${result.matchedCount}\n• Citas que continúan Pendientes: ${result.unmatchedCount}${extraMsg}`);
+                ? `\n- Pagos de Excel sin emparejar: ${result.unmatchedExcelCount} (disponibles en el panel para asignar manualmente)`
+                : '\n- Todos los pagos de Excel cuadraron con las citas registradas.';
+            alert(`Conciliacion con Excel finalizada:\n- Total citas: ${result.total}\n- Citas conciliadas como Pagadas: ${result.matchedCount}\n- Citas pendientes: ${result.unmatchedCount}${extraMsg}`);
         }
     }, [payments, reconcileAppointmentsWithExcel]);
 
@@ -611,18 +621,32 @@ const App: React.FC = () => {
     };
 
     const handleSavePayment = (paymentData: Payment) => {
+        let savedPayment: Payment;
+        if (editingPayment) {
+            savedPayment = { ...editingPayment, ...paymentData, id: editingPayment.id };
+        } else {
+            const newId = String(Date.now()) + Math.random().toString(36).substring(2);
+            savedPayment = { ...paymentData, id: newId, revisado: false };
+        }
+
         setAppState(prevState => {
-            let newPayments;
-            if (editingPayment) {
-                newPayments = prevState.payments.map(p => p.id === editingPayment.id ? { ...p, ...paymentData, id: p.id } : p);
-            } else {
-                const newId = String(Date.now()) + Math.random().toString(36).substring(2);
-                newPayments = [...prevState.payments, { ...paymentData, id: newId, revisado: false }];
-            }
+            const newPayments = editingPayment
+                ? prevState.payments.map(p => p.id === editingPayment.id ? savedPayment : p)
+                : [...prevState.payments, savedPayment];
             return { ...prevState, payments: newPayments };
         });
         setIsFormModalOpen(false);
         setEditingPayment(null);
+
+        // Enviar pago registrado a Google Sheets
+        sendPaymentToGoogleSheets(savedPayment).then(res => {
+            if (res.success) {
+                setSyncFeedback(`Pago de ${savedPayment.cliente} registrado y guardado en Google Sheet`);
+                setTimeout(() => setSyncFeedback(null), 4000);
+            }
+        }).catch(err => {
+            console.warn('[Google Sheets] Error enviando pago guardado:', err);
+        });
     };
 
     const handleDeletePayment = (id: string) => {
@@ -650,6 +674,7 @@ const App: React.FC = () => {
     };
 
     const handleToggleStatus = (id: string) => {
+        let syncedPayment: Payment | null = null;
         setAppState(prevState => {
             const newPayments = prevState.payments.map(p => {
                 if (p.id === id) {
@@ -682,12 +707,28 @@ const App: React.FC = () => {
                         default:
                             newStatus = p.estado;
                     }
-                    return { ...p, estado: newStatus, monto: newMonto, originalMonto: newOriginalMonto, fechaPago: newFechaPago };
+                    const updated = { ...p, estado: newStatus, monto: newMonto, originalMonto: newOriginalMonto, fechaPago: newFechaPago };
+                    if (newStatus === EstadoPago.Pagado) {
+                        syncedPayment = updated;
+                    }
+                    return updated;
                 }
                 return p;
             });
             return { ...prevState, payments: newPayments };
         });
+
+        // Si se marcó como Pagado, sincronizar con Google Sheets
+        if (syncedPayment) {
+            sendPaymentToGoogleSheets(syncedPayment).then(res => {
+                if (res.success) {
+                    setSyncFeedback(`Pago de ${(syncedPayment as Payment).cliente} sincronizado en Google Sheet`);
+                    setTimeout(() => setSyncFeedback(null), 4000);
+                }
+            }).catch(err => {
+                console.warn('[Google Sheets] Error al sincronizar cambio de estado:', err);
+            });
+        }
     };
 
     const handleToggleReviewed = (id: string) => {
@@ -820,7 +861,7 @@ const App: React.FC = () => {
                                             fechaPago: dateStr,
                                             estado: EstadoPago.Pendiente,
                                             metodoPago: 'N/A',
-                                            notas: `SimplyMeet Export ${it.scheduled_at ? `| ${it.scheduled_at}` : ''}`,
+                                            notas: `Cita Agendada ${it.scheduled_at ? `| ${it.scheduled_at}` : ''}`,
                                             revisado: false,
                                             telefono: cleanPhone,
                                         };
@@ -1008,9 +1049,16 @@ const App: React.FC = () => {
             }
 
             // Importar las citas directamente a la tabla sin forzar el cruce automático
-            // El usuario decide cuándo cruzar presionando el botón "Cruzar con Excel"
-            setAppState(prevState => ({ ...prevState, payments: allNewPayments }));
-            alert(`✓ Se importaron ${allNewPayments.length} citas exitosamente.\n\nPresiona el botón "Cruzar con Excel" cuando desees cruzar y conciliar la información con los pagos registrados.`);
+            // Si ya hay citas previas, se agregan las nuevas evitando duplicados exactos
+            setAppState(prevState => {
+                if (prevState.payments.length === 0) {
+                    return { ...prevState, payments: allNewPayments };
+                }
+                const existingKeys = new Set(prevState.payments.map(p => p.recordId || `${p.cliente}-${p.oficina}-${p.fecha}`));
+                const toAdd = allNewPayments.filter(p => !existingKeys.has(p.recordId || `${p.cliente}-${p.oficina}-${p.fecha}`));
+                return { ...prevState, payments: [...prevState.payments, ...toAdd] };
+            });
+            alert(`Se importaron ${allNewPayments.length} citas.\n\nPresione el boton "Cruzar con Excel" para conciliar la informacion con los pagos registrados.`);
 
         }).finally(() => {
             if (event.target) event.target.value = '';
@@ -1205,89 +1253,89 @@ const App: React.FC = () => {
 
                 {/* Banner de Pagos de Excel sin emparejar con citas */}
                 {unmatchedPayments.length > 0 && !isUnmatchedColumnOpen && (
-                    <div className="bg-amber-50 border border-amber-300 text-amber-950 px-5 py-3.5 rounded-2xl mb-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                    <div className="bg-slate-50 border border-slate-300 text-slate-900 px-5 py-3.5 rounded-2xl mb-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500 text-white font-bold text-base shadow-xs">
+                            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white font-bold text-sm shadow-xs">
                                 {unmatchedPayments.length}
                             </span>
                             <div>
-                                <h4 className="font-bold text-sm text-amber-950">
+                                <h4 className="font-bold text-sm text-slate-900">
                                     {unmatchedPayments.length === 1 
                                         ? 'Hay 1 pago de Excel sin emparejar' 
                                         : `Hay ${unmatchedPayments.length} pagos de Excel sin emparejar`}
                                 </h4>
-                                <p className="text-xs text-amber-800">
-                                    Estos pagos registrados no coincidieron con ninguna cita. Abre la columna lateral para arrastrarlos y emparejarlos.
+                                <p className="text-xs text-slate-600">
+                                    Estos pagos registrados no coincidieron automaticamente. Abra el panel para asignarlos a una cita.
                                 </p>
                             </div>
                         </div>
                         <button
                             type="button"
                             onClick={() => setIsUnmatchedColumnOpen(true)}
-                            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-xs transition flex items-center gap-2 cursor-pointer"
+                            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl shadow-xs transition flex items-center gap-2 cursor-pointer"
                         >
-                            <span>Mostrar Columna para Arrastrar</span>
-                            <span className="bg-amber-800/60 px-1.5 py-0.5 rounded-md text-[10px]">{unmatchedPayments.length}</span>
+                            <span>Ver Pagos sin Emparejar</span>
+                            <span className="bg-slate-700 px-1.5 py-0.5 rounded-md text-[10px]">{unmatchedPayments.length}</span>
                         </button>
                     </div>
                 )}
 
                 {/* Banner when filter hides all payments */}
                 {payments.length > 0 && filteredPayments.length === 0 && (
-                    <div className="bg-amber-50 border border-amber-300 text-amber-900 px-5 py-4 rounded-2xl mb-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                    <div className="bg-slate-50 border border-slate-300 text-slate-800 px-5 py-4 rounded-2xl mb-6 shadow-xs flex flex-wrap items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
-                            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-200 text-amber-900 font-bold">
-                                ℹ️
+                            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-200 text-slate-700 font-bold">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
                             </span>
                             <div>
                                 <p className="text-sm font-semibold">
                                     No hay citas con el filtro actual ({filters.mes !== -1 ? monthNames[filters.mes] : 'Todos los meses'} {filters.año !== 0 ? filters.año : 'Todos los años'}).
                                 </p>
-                                <p className="text-xs text-amber-800 mt-0.5">
-                                    Tienes <strong>{payments.length} citas registradas</strong> de SimplyMeet ({totalPendingCount} pendientes, {totalPaidCount} pagadas).
+                                <p className="text-xs text-slate-600 mt-0.5">
+                                    Tiene <strong>{payments.length} citas registradas</strong> ({totalPendingCount} pendientes, {totalPaidCount} pagadas).
                                 </p>
                             </div>
                         </div>
                         <button
                             type="button"
                             onClick={() => setFilters(prev => ({ ...prev, mes: -1, año: 0, searchTerm: '', estado: 'todos' }))}
-                            className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl shadow-sm transition"
+                            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-xl shadow-xs transition"
                         >
                             Ver Todas las Citas ({payments.length})
                         </button>
                     </div>
                 )}
 
-                <div className="flex flex-col lg:flex-row gap-6 items-start">
-                    <div className="flex-1 min-w-0 w-full">
-                        <PaymentTable 
-                            payments={filteredPayments} 
-                            onEdit={handleEditPayment} 
-                            onDelete={handleDeletePayment}
-                            onToggleStatus={handleToggleStatus}
-                            onToggleReviewed={handleToggleReviewed}
-                            onMerge={handleMerge}
-                            onViewImage={handleViewImage}
-                            isSelectionMode={isSelectionMode}
-                            selectedIds={selectedIds}
-                            onSelectPayment={handleSelectPayment}
-                            onSelectAll={handleSelectAll}
-                            onUpdatePayment={handleUpdatePayment}
-                            onMatchUnmatched={handleMatchUnmatchedPayment}
-                        />
-                    </div>
-
-                    {unmatchedPayments.length > 0 && isUnmatchedColumnOpen && (
-                        <UnmatchedColumn
-                            isOpen={isUnmatchedColumnOpen}
-                            onClose={() => setIsUnmatchedColumnOpen(false)}
-                            unmatchedPayments={unmatchedPayments}
-                            appointments={payments}
-                            onMatch={handleMatchUnmatchedPayment}
-                            onDismiss={handleDismissUnmatchedPayment}
-                        />
-                    )}
+                <div className="w-full">
+                    <PaymentTable 
+                        payments={filteredPayments} 
+                        onEdit={handleEditPayment} 
+                        onDelete={handleDeletePayment}
+                        onToggleStatus={handleToggleStatus}
+                        onToggleReviewed={handleToggleReviewed}
+                        onMerge={handleMerge}
+                        onViewImage={handleViewImage}
+                        isSelectionMode={isSelectionMode}
+                        selectedIds={selectedIds}
+                        onSelectPayment={handleSelectPayment}
+                        onSelectAll={handleSelectAll}
+                        onUpdatePayment={handleUpdatePayment}
+                        onMatchUnmatched={handleMatchUnmatchedPayment}
+                    />
                 </div>
+
+                {unmatchedPayments.length > 0 && isUnmatchedColumnOpen && (
+                    <UnmatchedColumn
+                        isOpen={isUnmatchedColumnOpen}
+                        onClose={() => setIsUnmatchedColumnOpen(false)}
+                        unmatchedPayments={unmatchedPayments}
+                        appointments={payments}
+                        onMatch={handleMatchUnmatchedPayment}
+                        onDismiss={handleDismissUnmatchedPayment}
+                    />
+                )}
                 <ActionFooter 
                     onRequestPayment={onRequestPayment}
                     onGenerateProof={onGenerateProof}
@@ -1388,6 +1436,7 @@ const App: React.FC = () => {
             <GoogleSheetsModal
                 isOpen={isGoogleSheetsModalOpen}
                 onClose={() => setIsGoogleSheetsModalOpen(false)}
+                payments={payments}
             />
 
             <UnmatchedPaymentsModal

@@ -136,11 +136,11 @@ const FilterBar: React.FC<FilterBarProps> = ({
     // Render Streamlined Google-Style Bar in Focus Mode
     if (isFocusMode) {
         return (
-            <div className="bg-white p-5 rounded-2xl shadow-google-sm mb-6 border border-amber-300/80 transition-all">
+            <div className="bg-white p-5 rounded-2xl shadow-google-sm mb-6 border border-slate-200 transition-all">
                 {/* Focus Mode Header Banner */}
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-4 mb-4 border-b border-[#f1f3f4]">
                     <div className="flex items-center gap-3">
-                        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-amber-100 text-amber-900 shadow-xs">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-700 border border-indigo-200 shadow-xs">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.2}>
                                 <circle cx="12" cy="12" r="3" />
                                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 12h3m12 0h3M12 3v3m0 12v3" />
@@ -149,7 +149,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                         <div>
                             <div className="flex items-center gap-2">
                                 <h3 className="font-bold text-[#202124] text-base">Modo Enfoque: Conciliación Diaria</h3>
-                                <span className="text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                                <span className="text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200 px-2.5 py-0.5 rounded-full">
                                     Vista Limpia
                                 </span>
                             </div>
@@ -164,7 +164,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                         <span className="px-3 py-1.5 bg-[#f1f3f4] text-[#3c4043] font-semibold rounded-full border border-[#dadce0]">
                             Total: <strong className="text-[#202124]">{totalCount ?? 0}</strong>
                         </span>
-                        <span className="px-3 py-1.5 bg-amber-50 text-amber-800 font-semibold rounded-full border border-amber-200">
+                        <span className="px-3 py-1.5 bg-slate-100 text-slate-700 font-semibold rounded-full border border-slate-200">
                             Pendientes: <strong>{pendingCount ?? 0}</strong>
                         </span>
                         <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 font-semibold rounded-full border border-emerald-200">
@@ -335,10 +335,10 @@ const FilterBar: React.FC<FilterBarProps> = ({
                                 onClick={onToggleUnmatchedColumn || onOpenUnmatched}
                                 className={`px-4 py-2.5 text-white text-sm font-semibold rounded-full shadow-google-sm hover:shadow-google-md transition flex items-center gap-2 cursor-pointer ${
                                     isUnmatchedColumnOpen 
-                                        ? 'bg-amber-600 ring-2 ring-amber-300' 
-                                        : 'bg-amber-500 hover:bg-amber-600'
+                                        ? 'bg-indigo-700 ring-2 ring-indigo-300' 
+                                        : 'bg-indigo-600 hover:bg-indigo-700'
                                 }`}
-                                title="Mostrar columna de pagos de Excel para arrastrar y emparejar"
+                                title="Mostrar columna de pagos de Excel para emparejar"
                             >
                                 <span className="w-2 h-2 rounded-full bg-white animate-pulse"></span>
                                 <span>Sin Emparejar ({unmatchedCount})</span>
@@ -349,7 +349,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                             onClick={onToggleSelectionMode} 
                             className={`px-4 py-2.5 text-sm font-semibold rounded-full shadow-xs transition flex items-center gap-2 ${
                                 isSelectionMode 
-                                    ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-google-sm' 
+                                    ? 'bg-slate-800 hover:bg-slate-900 text-white shadow-google-sm' 
                                     : 'bg-[#f1f3f4] hover:bg-[#e8eaed] text-[#3c4043] border border-[#dadce0]'
                             }`}
                         >
@@ -606,8 +606,8 @@ const FilterBar: React.FC<FilterBarProps> = ({
                         onClick={onToggleUnmatchedColumn || onOpenUnmatched}
                         className={`px-4 py-2.5 text-white text-sm font-semibold rounded-full shadow-google-sm hover:shadow-google-md transition flex items-center gap-2 cursor-pointer ${
                             isUnmatchedColumnOpen 
-                                ? 'bg-amber-600 ring-2 ring-amber-300' 
-                                : 'bg-amber-500 hover:bg-amber-600'
+                                ? 'bg-indigo-700 ring-2 ring-indigo-300' 
+                                : 'bg-indigo-600 hover:bg-indigo-700'
                         }`}
                         title="Ver pagos de Excel sin emparejar con citas"
                     >
@@ -620,7 +620,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                     onClick={onToggleSelectionMode} 
                     className={`px-4 py-2.5 text-sm font-semibold rounded-full shadow-xs transition flex items-center gap-2 ${
                         isSelectionMode 
-                            ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-google-sm' 
+                            ? 'bg-slate-800 hover:bg-slate-900 text-white shadow-google-sm' 
                             : 'bg-[#f1f3f4] hover:bg-[#e8eaed] text-[#3c4043] border border-[#dadce0]'
                     }`}
                 >
@@ -673,7 +673,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
 
                 <button 
                     onClick={onShowEstimates} 
-                    className="px-4 py-2.5 bg-white text-[#b06000] border border-amber-200 hover:bg-amber-50 text-sm font-semibold rounded-full shadow-xs transition flex items-center gap-2"
+                    className="px-4 py-2.5 bg-white text-slate-700 border border-slate-200 hover:bg-slate-50 text-sm font-semibold rounded-full shadow-xs transition flex items-center gap-2"
                 >
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />

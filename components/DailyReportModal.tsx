@@ -29,7 +29,7 @@ const statusBadge = (status: EstadoPago) => {
         case EstadoPago.Pendiente:
             return <span className={`${baseClasses} bg-red-100 text-red-800`}>Pendiente</span>;
         case EstadoPago.PlanMensual:
-            return <span className={`${baseClasses} bg-yellow-100 text-yellow-800`}>Plan Mensual</span>;
+            return <span className={`${baseClasses} bg-violet-100 text-violet-800`}>Plan Mensual</span>;
         case EstadoPago.CreditoMensual:
             return <span className={`${baseClasses} bg-blue-100 text-blue-800`}>Crédito Mensual</span>;
         default:

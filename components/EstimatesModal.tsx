@@ -94,7 +94,7 @@ const EstimatesModal: React.FC<EstimatesModalProps> = ({ isOpen, onClose, paymen
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-[#f1f3f4] flex justify-between items-center bg-[#f8fafd]">
                     <div className="flex items-center gap-3">
-                        <span className="w-10 h-10 rounded-2xl bg-amber-50 text-[#f9ab00] flex items-center justify-center font-bold shadow-xs border border-amber-200">
+                        <span className="w-10 h-10 rounded-2xl bg-blue-50 text-[#1a73e8] flex items-center justify-center font-bold shadow-xs border border-blue-200">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
@@ -118,8 +118,8 @@ const EstimatesModal: React.FC<EstimatesModalProps> = ({ isOpen, onClose, paymen
                 
                 <div ref={reportContentRef} className="p-6 bg-white flex-grow overflow-y-auto space-y-6">
                     {/* Big Total Card */}
-                    <div className="bg-[#fef7e0] border border-[#fce8b2] text-[#202124] p-6 rounded-2xl shadow-google-sm text-center">
-                        <p className="text-xs font-bold text-[#b06000] uppercase tracking-wider">Total Estimado Potencial</p>
+                    <div className="bg-[#f8fafd] border border-[#dadce0] text-[#202124] p-6 rounded-2xl shadow-google-sm text-center">
+                        <p className="text-xs font-bold text-[#1a73e8] uppercase tracking-wider">Total Estimado Potencial</p>
                         <p className="text-4xl font-extrabold tracking-tight mt-1 font-mono text-[#202124]">{formatCurrency(summaryData.totalEstimated)}</p>
                         <p className="text-xs text-[#5f6368] mt-2">Calculado con base en todos los registros filtrados</p>
                     </div>
@@ -133,7 +133,7 @@ const EstimatesModal: React.FC<EstimatesModalProps> = ({ isOpen, onClose, paymen
                                     return (
                                         <div key={oficina} className="flex justify-between items-center bg-[#f8fafd] p-3.5 rounded-xl border border-[#dadce0] hover:border-[#1a73e8] transition">
                                             <div className="flex items-center gap-3">
-                                                <div className="p-2 bg-amber-100/60 rounded-lg text-[#f9ab00]">
+                                                <div className="p-2 bg-blue-50 rounded-lg text-[#1a73e8]">
                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
                                                     </svg>

@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Oficina, EstadoPago, Payment, OFFICE_BANK_DETAILS, BankAccountInfo, DEFAULT_CLIENTS_LIST } from '../types';
 import { sendPaymentToGoogleSheets, ClientPaymentSubmission } from '../services/googleSheetsService';
+import { uploadReceiptToCloudinary } from '../services/cloudinaryService';
 
 interface ClientPaymentPortalProps {
   onPaymentSubmitted: (payment: Payment | Payment[]) => void;
@@ -163,6 +164,9 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     cliente: string;
     total: number;
     rows: ServiceRow[];
+    googleSheetsSuccess?: boolean;
+    googleSheetsMessage?: string;
+    payments?: Payment[];
   } | null>(null);
 
   // Total Hours and Amount calculations
@@ -250,14 +254,66 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     setTimeout(() => setCopiedBankKey(null), 2500);
   };
 
-  // File Upload Handler
-  const handleFileChange = (file?: File) => {
-    if (file && file.type.startsWith('image/')) {
+  // Compression helper to optimize receipts for lightning-fast uploads
+  const compressImageFile = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        setComprobanteImg(e.target?.result as string);
-      };
       reader.readAsDataURL(file);
+      reader.onload = (event) => {
+        const img = new Image();
+        img.src = event.target?.result as string;
+        img.onload = () => {
+          const MAX_DIM = 1000;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height && width > MAX_DIM) {
+            height = Math.round((height * MAX_DIM) / width);
+            width = MAX_DIM;
+          } else if (height > MAX_DIM) {
+            width = Math.round((width * MAX_DIM) / height);
+            height = MAX_DIM;
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(event.target?.result as string);
+            return;
+          }
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Highly readable at ~80-160KB JPEG for immediate, seamless transmission
+          const compressed = canvas.toDataURL('image/jpeg', 0.75);
+          resolve(compressed);
+        };
+        img.onerror = () => {
+          resolve(event.target?.result as string);
+        };
+      };
+      reader.onerror = (err) => reject(err);
+    });
+  };
+
+  // File Upload Handler
+  const handleFileChange = async (file?: File) => {
+    if (file && (file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic)$/i.test(file.name))) {
+      try {
+        const compressed = await compressImageFile(file);
+        setComprobanteImg(compressed);
+      } catch (err) {
+        console.error('Error al optimizar imagen:', err);
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          setComprobanteImg(e.target?.result as string);
+        };
+        reader.readAsDataURL(file);
+      }
     }
   };
 
@@ -298,8 +354,27 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 
     setIsSubmitting(true);
 
+    // 1. Subir comprobante a Cloudinary para obtener una URL pública HTTPS inmediata
+    let hostedComprobanteUrl = '';
+    if (comprobanteImg) {
+      try {
+        const uploadRes = await uploadReceiptToCloudinary(
+          comprobanteImg,
+          cliente.trim(),
+          rows[0]?.oficina
+        );
+        if (uploadRes.success && uploadRes.url) {
+          hostedComprobanteUrl = uploadRes.url;
+        }
+      } catch (errUpload) {
+        console.warn('Advertencia al subir a Cloudinary:', errUpload);
+      }
+    }
+
     const submissionDate = toLocalDateString(new Date());
     const newPayments: Payment[] = [];
+    let allSucceeded = true;
+    let syncMessage = '';
 
     // Create a payment record for each row and send to Google Sheets
     for (let i = 0; i < rows.length; i++) {
@@ -319,7 +394,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
         estado: EstadoPago.Pagado,
         metodoPago: 'Transferencia Bancaria',
         notas: rows.length > 1 ? `Boleta combinada (${rows.length} oficinas)` : 'Reporte portal clientes',
-        comprobanteImg,
+        comprobanteImg: hostedComprobanteUrl || comprobanteImg,
         revisado: false,
       };
 
@@ -341,12 +416,24 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
         nit: '',
         nombreFactura: '',
         notas: rows.length > 1 ? `Boleta combinada (${rows.length} oficinas)` : 'Reporte portal clientes',
-        comprobanteImg,
+        comprobanteImg: hostedComprobanteUrl || comprobanteImg,
+        comprobanteUrl: hostedComprobanteUrl || '',
       };
 
       try {
-        await sendPaymentToGoogleSheets(clientSubmission);
-      } catch (err) {
+        const sheetRes = await sendPaymentToGoogleSheets(clientSubmission);
+        if (sheetRes.success) {
+          syncMessage = sheetRes.message;
+          if (sheetRes.comprobanteUrl && !sheetRes.comprobanteUrl.startsWith('Error')) {
+            newPaymentData.comprobanteImg = sheetRes.comprobanteUrl;
+          }
+        } else {
+          allSucceeded = false;
+          syncMessage = sheetRes.message || 'Error de conexión con Google Sheets';
+        }
+      } catch (err: any) {
+        allSucceeded = false;
+        syncMessage = err?.message || 'Error de red al conectar con Google Sheets';
         console.error('Error enviando fila a Google Sheets:', err);
       }
     }
@@ -367,6 +454,9 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       cliente: cliente.trim(),
       total: totalAmount,
       rows: [...rows],
+      googleSheetsSuccess: allSucceeded,
+      googleSheetsMessage: syncMessage,
+      payments: newPayments,
     });
 
     setIsSubmitting(false);
@@ -431,9 +521,44 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
             <h2 className="text-xl font-bold text-slate-900 mb-1">
               Comprobante Recibido
             </h2>
-            <p className="text-sm text-slate-500 mb-6">
+            <p className="text-sm text-slate-500 mb-4">
               Gracias, <strong>{submittedData.cliente}</strong>. Tu reporte ha sido registrado exitosamente en el sistema.
             </p>
+
+            {/* Google Sheets Sync Indicator */}
+            {submittedData.googleSheetsSuccess ? (
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-medium mb-6">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Sincronizado con Google Sheets</span>
+              </div>
+            ) : (
+              <div className="mb-6 p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-700 text-xs flex flex-col items-center gap-2 max-w-md mx-auto">
+                <div className="flex items-center gap-1.5 font-medium">
+                  <svg className="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{submittedData.googleSheetsMessage || 'Guardado localmente. La sincronización a Sheets está en proceso.'}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (submittedData.payments && submittedData.payments.length > 0) {
+                      for (const p of submittedData.payments) {
+                        await sendPaymentToGoogleSheets(p);
+                      }
+                      setSubmittedData({
+                        ...submittedData,
+                        googleSheetsSuccess: true,
+                        googleSheetsMessage: 'Sincronizado con Google Sheets'
+                      });
+                    }
+                  }}
+                  className="px-3 py-1 bg-slate-800 hover:bg-slate-900 text-white font-medium rounded-lg text-[11px] transition shadow-xs cursor-pointer"
+                >
+                  Reintentar sincronización con Google Sheets
+                </button>
+              </div>
+            )}
 
             <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-left text-xs text-slate-700 space-y-3 mb-6 max-w-md mx-auto">
               <div className="font-semibold text-slate-800 border-b border-slate-200 pb-2">
@@ -459,16 +584,16 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
               <a
                 href={`https://wa.me/?text=${encodeURIComponent(
                   `*Comprobante de Pago Reportado - ONEDAY Spaces*\n\n` +
-                  `👤 *Cliente:* ${submittedData.cliente}\n` +
-                  `💰 *Total:* ${formatCurrency(submittedData.total)}\n\n` +
-                  `📋 *Detalle de Oficinas:*\n` +
+                  `*Cliente:* ${submittedData.cliente}\n` +
+                  `*Total:* ${formatCurrency(submittedData.total)}\n\n` +
+                  `*Detalle de Oficinas:*\n` +
                   submittedData.rows
                     .map(
                       (r, i) =>
-                        `• #${i + 1} Oficina ${r.oficina} | Fecha: ${r.fechaServicio} | ${r.horas} hr${r.horas > 1 ? 's' : ''} = ${formatCurrency(r.horas * HOURLY_RATE)}`
+                        `• Oficina ${r.oficina} | Fecha: ${r.fechaServicio} | ${r.horas} hr${r.horas > 1 ? 's' : ''} = ${formatCurrency(r.horas * HOURLY_RATE)}`
                     )
                     .join('\n') +
-                  `\n\n✅ _Comprobante adjunto y reportado exitosamente._`
+                  `\n\n_Comprobante adjunto y reportado exitosamente._`
                 )}`}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -616,12 +741,14 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                   </div>
                 )}
 
-                {/* 💡 Sugerencia inteligente de última cita no pagada (a partir del 31 de agosto de 2026) */}
+                {/* Sugerencia de última cita pendiente (a partir del 31 de agosto de 2026) */}
                 {suggestedUnpaidAppointment && (
-                  <div className="mt-3 p-3.5 bg-blue-50/90 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-150">
+                  <div className="mt-3 p-3 bg-blue-50/90 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-150">
                     <div className="space-y-0.5 text-xs text-blue-900">
                       <div className="font-bold flex items-center gap-1.5">
-                        <span className="text-blue-600">⚡</span>
+                        <svg className="w-3.5 h-3.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
                         <span>Cita pendiente registrada en el sistema:</span>
                       </div>
                       <p className="text-blue-800 text-[11px]">
@@ -632,9 +759,9 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     <button
                       type="button"
                       onClick={() => handleApplySuggestedAppointment(suggestedUnpaidAppointment)}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 shrink-0"
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg shadow-xs transition flex items-center justify-center gap-1.5 shrink-0"
                     >
-                      <span>✨ Usar datos de mi cita</span>
+                      <span>Usar datos de mi cita</span>
                     </button>
                   </div>
                 )}
@@ -655,8 +782,11 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                         className="w-14 h-14 object-cover rounded-xl border border-slate-200 shadow-xs"
                       />
                       <div>
-                        <span className="text-xs font-bold text-emerald-900 block">
-                          ✓ Comprobante cargado correctamente
+                        <span className="text-xs font-bold text-emerald-900 block flex items-center gap-1">
+                          <svg className="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                          <span>Comprobante cargado correctamente</span>
                         </span>
                         <span className="text-[11px] text-emerald-700">
                           Listo para enviar y conciliar
@@ -704,44 +834,20 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                   </span>
                 </div>
 
-                <div className="space-y-3">
-                  {rows.map((row, index) => (
+                {/* Filas delgadas y compactas para teléfono */}
+                <div className="space-y-2">
+                  {rows.map((row) => (
                     <div
                       key={row.id}
-                      className="p-4 bg-slate-50/80 border border-slate-200 rounded-xl space-y-3 relative group transition hover:border-slate-300"
+                      className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl transition hover:border-slate-300"
                     >
-                      <div className="flex items-center justify-between text-xs font-semibold text-slate-600 border-b border-slate-200 pb-2">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-bold">
-                            {index + 1}
-                          </span>
-                          Servicio #{index + 1}
-                        </span>
-
-                        {rows.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveRow(row.id)}
-                            className="text-red-600 hover:text-red-800 hover:underline flex items-center gap-1 text-[11px]"
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                            Eliminar
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        {/* Office Selector */}
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                            Oficina:
-                          </label>
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                        {/* Selector de Oficina */}
+                        <div className="flex-1 min-w-[130px]">
                           <select
                             value={row.oficina}
                             onChange={(e) => handleUpdateRowOficina(row.id, e.target.value as Oficina)}
-                            className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                           >
                             {OFFICES.map((ofc) => (
                               <option key={ofc.id} value={ofc.id}>
@@ -751,50 +857,57 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                           </select>
                         </div>
 
-                        {/* Date of Service */}
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                            Fecha de Uso:
-                          </label>
+                        {/* Fecha de Uso */}
+                        <div className="w-full sm:w-36">
                           <input
                             type="date"
                             value={row.fechaServicio}
                             onChange={(e) => handleUpdateRowFecha(row.id, e.target.value)}
                             required
-                            className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
                           />
                         </div>
 
-                        {/* Hours Stepper */}
-                        <div>
-                          <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                            Horas Utilizadas:
-                          </label>
-                          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden">
+                        {/* Horas Utilizadas + Subtotal + Eliminar */}
+                        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
+                          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden h-[32px]">
                             <button
                               type="button"
                               onClick={() => handleDecrementRowHours(row.id)}
                               disabled={row.horas <= 1}
-                              className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-sm"
+                              className="px-2 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-xs"
                             >
                               -
                             </button>
-                            <span className="flex-1 text-center text-xs font-bold text-slate-900">
+                            <span className="px-2 text-center text-xs font-bold text-slate-900 whitespace-nowrap min-w-[40px]">
                               {row.horas} hr{row.horas > 1 ? 's' : ''}
                             </span>
                             <button
                               type="button"
                               onClick={() => handleIncrementRowHours(row.id)}
-                              className="px-2.5 py-1.5 text-slate-600 hover:bg-slate-100 font-bold text-sm"
+                              className="px-2 text-slate-600 hover:bg-slate-100 font-bold text-xs"
                             >
                               +
                             </button>
                           </div>
-                        </div>
-                      </div>
 
-                      <div className="text-right text-xs font-bold text-slate-700 pt-1">
-                        Subtotal: <span className="text-blue-700">{formatCurrency(row.horas * HOURLY_RATE)}</span>
+                          <span className="text-xs font-bold text-slate-700 min-w-[70px] text-right">
+                            {formatCurrency(row.horas * HOURLY_RATE)}
+                          </span>
+
+                          {rows.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveRow(row.id)}
+                              className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
+                              title="Eliminar fila"
+                            >
+                              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -802,12 +915,12 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                   <button
                     type="button"
                     onClick={handleAddRow}
-                    className="w-full py-2.5 border-2 border-dashed border-slate-300 hover:border-blue-400 rounded-xl text-xs font-bold text-slate-600 hover:text-blue-600 hover:bg-blue-50/50 transition flex items-center justify-center gap-1.5"
+                    className="w-full py-2 border border-dashed border-slate-300 hover:border-blue-400 rounded-xl text-xs font-semibold text-slate-600 hover:text-blue-600 hover:bg-blue-50/50 transition flex items-center justify-center gap-1.5 cursor-pointer"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                     </svg>
-                    + Agregar otra fecha u oficina al mismo comprobante
+                    <span>Agregar otra fecha u oficina</span>
                   </button>
                 </div>
               </div>

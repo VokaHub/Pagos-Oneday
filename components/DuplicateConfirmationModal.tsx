@@ -27,7 +27,7 @@ const DuplicateConfirmationModal: React.FC<DuplicateConfirmationModalProps> = ({
             <div className="bg-white rounded-3xl shadow-google-lg w-full max-w-2xl border border-[#dadce0] animate-in fade-in zoom-in-95 duration-150 overflow-hidden">
                 <div className="p-6">
                     <div className="flex items-start gap-4">
-                        <div className="flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-2xl bg-amber-50 text-[#f9ab00] border border-amber-200 shadow-xs">
+                        <div className="flex-shrink-0 flex items-center justify-center h-11 w-11 rounded-2xl bg-slate-100 text-slate-700 border border-slate-200 shadow-xs">
                             <svg className="h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                             </svg>
