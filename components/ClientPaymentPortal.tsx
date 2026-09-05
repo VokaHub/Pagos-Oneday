@@ -735,7 +735,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     1. Nombre Completo o Empresa <span className="text-red-500">*</span>
                   </label>
                   <span className="text-[11px] text-slate-400">
-                    Búsqueda automática
+                   
                   </span>
                 </div>
 
@@ -895,7 +895,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     </span>
                   ) : (
                     <span className="text-[11px] text-slate-400">
-                      8 dígitos (Guatemala)
+                      
                     </span>
                   )}
                 </div>
