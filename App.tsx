@@ -1,11 +1,10 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Payment, FilterState, Oficina, EstadoPago, OFFICE_OWNERS } from './types';
+import { Payment, FilterState, Oficina, EstadoPago, OFFICE_OWNERS, SortType } from './types';
 import Header from './components/Header';
 import FilterBar from './components/FilterBar';
 import PaymentTable from './components/PaymentTable';
 import PaymentFormModal from './components/PaymentFormModal';
 import ConfirmationModal from './components/ConfirmationModal';
-import DailyReportModal from './components/DailyReportModal';
 import PaymentRequestModal from './components/PaymentRequestModal';
 import ProofOfPaymentModal from './components/ProofOfPaymentModal';
 import EstimatesModal from './components/EstimatesModal';
@@ -16,7 +15,6 @@ import DuplicateConfirmationModal from './components/DuplicateConfirmationModal'
 import ClientVolumeModal from './components/ClientVolumeModal';
 import ClientPaymentPortal from './components/ClientPaymentPortal';
 import GoogleSheetsModal from './components/GoogleSheetsModal';
-import { UnmatchedPaymentsModal } from './components/UnmatchedPaymentsModal';
 import { UnmatchedColumn } from './components/UnmatchedColumn';
 import { 
     fetchPaymentsFromSheet, 
@@ -88,14 +86,15 @@ const toLocalDateString = (date: Date): string => {
 };
 
 const getInitialFilters = (): FilterState => {
+    const now = new Date();
     return {
         searchTerm: '',
         oficina: Object.values(Oficina),
         estado: 'todos',
         fecha: '',
         fechaPago: '',
-        mes: -1, // Default to "Todos los meses" so SimplyMeet appointments appear instantly
-        año: 0,  // Default to "Todos los años"
+        mes: now.getMonth(), // Default al mes actual
+        año: now.getFullYear(),  // Default al año actual
         sortBy: 'date',
     };
 };
@@ -136,7 +135,6 @@ const App: React.FC = () => {
             return [];
         }
     });
-    const [isUnmatchedModalOpen, setIsUnmatchedModalOpen] = useState(false);
     const [isUnmatchedColumnOpen, setIsUnmatchedColumnOpen] = useState(true);
 
     // Navigation & URL routing
@@ -196,12 +194,165 @@ const App: React.FC = () => {
         setCurrentHistoryIndex(newHistory.length - 1);
     }, []);
 
-    // Normalizador de texto para emparejamiento inteligente de clientes
-    const norm = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+    // Helpers para emparejamiento inteligente de citas y pagos de Excel
+    const TITLE_WORDS = useMemo(() => new Set([
+        'dr', 'dra', 'doctor', 'doctora', 
+        'lic', 'licda', 'licenciado', 'licenciada', 
+        'ing', 'ingeniero', 'ingeniera', 
+        'arq', 'arquitecto', 'arquitecta', 
+        'sr', 'sra', 'senor', 'senora', 
+        'don', 'dona', 'de', 'del', 'la', 'las', 'los', 'y'
+    ]), []);
 
-    // Motor de cuadre manual: concilia las citas del archivo (tira SimplyMeet en JSON, XLSX o CSV)
-    // contra los pagos registrados actualmente en el backend de Excel (Google Sheets).
-    // Si el usuario borra citas en Excel, NO se toman en cuenta. Solo lo que está en Excel al momento.
+    const extractNameTokens = useCallback((name?: string): string[] => {
+        if (!name) return [];
+        return name
+            .toLowerCase()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length >= 2 && !TITLE_WORDS.has(w));
+    }, [TITLE_WORDS]);
+
+    const normalizeDateStr = useCallback((d?: string): string => {
+        if (!d) return '';
+        const clean = String(d).trim().split('T')[0].split(' ')[0];
+        if (/^\d{4}-\d{1,2}-\d{1,2}$/.test(clean)) {
+            const [y, m, day] = clean.split('-');
+            return `${y}-${m.padStart(2, '0')}-${day.padStart(2, '0')}`;
+        }
+        const parts = clean.split(/[\/\-]/);
+        if (parts.length === 3) {
+            if (parts[0].length === 4) {
+                return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+            }
+            if (parts[2].length === 4) {
+                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+        }
+        const parsed = new Date(d);
+        if (!isNaN(parsed.getTime())) {
+            return parsed.toISOString().split('T')[0];
+        }
+        return clean;
+    }, []);
+
+    const normalizeOfficeKey = useCallback((text?: string): string => {
+        if (!text) return '';
+        const t = String(text).toUpperCase().replace(/[^A-Z0-9]/g, '');
+        if (t.includes('1201')) return '1201';
+        if (t.includes('203B') || t.includes('203')) return '203B';
+        if (t.includes('211B') || t.includes('211')) return '211B';
+        if (t.includes('232B') || t.includes('232')) return '232B';
+        if (t.includes('323') || t.includes('VITALE') || t.includes('DM')) return '323';
+        return '';
+    }, []);
+
+    const normalizePhone = useCallback((phone?: string): string => {
+        if (!phone) return '';
+        const digits = String(phone).replace(/\D/g, '');
+        if (digits.length === 11 && digits.startsWith('502')) {
+            return digits.slice(3);
+        }
+        if (digits.length >= 8) {
+            return digits.slice(-8);
+        }
+        return digits;
+    }, []);
+
+    const arePhonesMatching = useCallback((phoneA?: string, phoneB?: string): boolean => {
+        const pA = normalizePhone(phoneA);
+        const pB = normalizePhone(phoneB);
+        if (!pA || !pB || pA.length < 7 || pB.length < 7) return false;
+        return pA === pB;
+    }, [normalizePhone]);
+
+    const arePhonesConflicting = useCallback((phoneA?: string, phoneB?: string): boolean => {
+        const pA = normalizePhone(phoneA);
+        const pB = normalizePhone(phoneB);
+        // Si ambos tienen teléfono pero no coinciden, hay conflicto estricto (son clientes distintos)
+        return Boolean(pA && pB && pA.length >= 7 && pB.length >= 7 && pA !== pB);
+    }, [normalizePhone]);
+
+    const calculateNameSimilarity = useCallback((nameA?: string, nameB?: string): number => {
+        if (!nameA || !nameB) return 0;
+        const cleanA = nameA.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+        const cleanB = nameB.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+        
+        if (cleanA && cleanA === cleanB) return 100;
+        if (cleanA.length >= 4 && cleanB.length >= 4 && (cleanA.includes(cleanB) || cleanB.includes(cleanA))) {
+            return 90;
+        }
+
+        const tokensA = extractNameTokens(nameA);
+        const tokensB = extractNameTokens(nameB);
+        if (tokensA.length === 0 || tokensB.length === 0) return 0;
+
+        let matchCount = 0;
+        for (const tA of tokensA) {
+            if (tokensB.some(tB => tA === tB || (tA.length >= 4 && tB.length >= 4 && (tA.startsWith(tB) || tB.startsWith(tA))))) {
+                matchCount++;
+            }
+        }
+
+        if (matchCount >= 2) return 85;
+        if (matchCount === 1) {
+            if (tokensA.length <= 2 || tokensB.length <= 2) return 70;
+            return 45;
+        }
+        return 0;
+    }, [extractNameTokens]);
+
+    const computeConfidence = useCallback((apt: Payment, sp: SheetPaymentRow): number => {
+        // 1. Si ambos tienen teléfono y no coinciden, rechazo total (clientes distintos)
+        if (arePhonesConflicting(apt.telefono, sp.telefono)) {
+            return 0;
+        }
+
+        const phoneMatches = arePhonesMatching(apt.telefono, sp.telefono);
+
+        const nameScore = calculateNameSimilarity(apt.cliente, sp.cliente);
+        if (!phoneMatches && nameScore === 0) return 0;
+
+        const aptDate = normalizeDateStr(apt.fecha);
+        const spDate = normalizeDateStr(sp.fechaServicio || sp.fechaPago);
+        const dateMatches = aptDate && spDate && aptDate === spDate;
+        const dateEmpty = !spDate;
+
+        const aptOffice = normalizeOfficeKey(apt.oficina);
+        const spOffice = normalizeOfficeKey(sp.oficina);
+        const officeMatches = aptOffice && spOffice && aptOffice === spOffice;
+        const officeEmpty = !spOffice;
+
+        // Si fecha u oficina se especifican en ambos y se contradicen directamente, rechazar
+        if (spDate && aptDate && spDate !== aptDate) return 0;
+        if (spOffice && aptOffice && spOffice !== aptOffice) return 0;
+
+        const aptHours = Number(apt.horas || 0);
+        const spHours = Number(sp.horas || 0);
+        const hoursMatch = aptHours > 0 && spHours > 0 && Math.abs(aptHours - spHours) < 0.1;
+
+        const aptMonto = Number(apt.monto || 0);
+        const spMonto = Number(sp.monto || 0);
+        const montoMatch = aptMonto > 0 && spMonto > 0 && Math.abs(aptMonto - spMonto) < 1;
+
+        let score = phoneMatches ? 100 : nameScore;
+
+        if (phoneMatches) score += 60; // Bono estelar por match telefónico exacto
+        if (dateMatches) score += 50;
+        else if (dateEmpty) score += 15;
+
+        if (officeMatches) score += 40;
+        else if (officeEmpty) score += 15;
+
+        if (hoursMatch || montoMatch) score += 30;
+
+        return score;
+    }, [arePhonesConflicting, arePhonesMatching, calculateNameSimilarity, normalizeDateStr, normalizeOfficeKey]);
+
+    // Motor de cuadre inteligente: concilia citas con pagos en Excel (Google Sheets)
+    // Soporta pagos agrupados (ej. 1 boleta por 2 o más horas que cubre múltiples citas sueltas de 1 hora)
+    // y realiza descarte ordenado por cliente, fecha y oficina.
     const reconcileAppointmentsWithExcel = useCallback(async (baseAppointments: Payment[]) => {
         if (!baseAppointments || baseAppointments.length === 0) return null;
         setIsSyncing(true);
@@ -210,8 +361,7 @@ const App: React.FC = () => {
             const sheetRes = await fetchPaymentsFromSheet().catch(e => ({ success: false, pagos: [], message: e?.message }));
             let sheetPagos: SheetPaymentRow[] = (sheetRes.success && Array.isArray(sheetRes.pagos)) ? sheetRes.pagos : [];
 
-            // Si Google Sheets respondió exitosamente, sus filas son la fuente de verdad exclusiva
-            // (no agregamos registros viejos que hayan sido borrados en el Excel)
+            // Si Google Sheets no tiene datos o falló, buscar pagos pendientes locales
             if (!sheetRes.success || sheetPagos.length === 0) {
                 try {
                     const localSubmissionsRaw = localStorage.getItem('oneday_pending_client_submissions');
@@ -240,64 +390,285 @@ const App: React.FC = () => {
                 }
             }
 
-            let matchedCount = 0;
-            // Seguimiento estricto 1 a 1 por índice de fila de Excel
-            const matchedSheetIndices = new Set<number>();
+            // 2. Preparar bolsa de pagos de Excel rastreando horas totales y restantes
+            interface TrackedSheetPayment {
+                sp: SheetPaymentRow;
+                index: number;
+                totalHours: number;
+                totalMonto: number;
+                remainingHours: number;
+                matchedAptIndices: Set<number>;
+            }
 
-            // 2. Emparejar cada cita de la tira con los pagos de Excel
-            const reconciledAppointments: Payment[] = baseAppointments.map(appointment => {
-                const appClientNorm = norm(appointment.cliente);
-                const appDate = (appointment.fecha || '').split('T')[0];
-                const appOffice = appointment.oficina;
+            const trackedSheetPayments: TrackedSheetPayment[] = sheetPagos.map((sp, index) => {
+                const rawH = Number(sp.horas);
+                const rawM = Number(sp.monto);
+                let totalH = 1;
+                if (!isNaN(rawH) && rawH > 0) {
+                    totalH = rawH;
+                } else if (!isNaN(rawM) && rawM > 0) {
+                    totalH = Math.max(1, Math.round(rawM / 65));
+                }
+                const totalM = (!isNaN(rawM) && rawM > 0) ? rawM : totalH * 65;
+                return {
+                    sp,
+                    index,
+                    totalHours: totalH,
+                    totalMonto: totalM,
+                    remainingHours: totalH,
+                    matchedAptIndices: new Set<number>(),
+                };
+            });
 
-                // Buscar coincidencia en Excel no utilizada previamente
-                let matchedIndex = -1;
-                for (let i = 0; i < sheetPagos.length; i++) {
-                    if (matchedSheetIndices.has(i)) continue;
+            // 3. Preparar citas a conciliar con horas pendientes
+            interface TrackedAppointment {
+                apt: Payment;
+                index: number;
+                hoursNeeded: number;
+                hoursRemaining: number;
+                isCovered: boolean;
+                matchedPayments: { sp: SheetPaymentRow; hoursAllocated: number }[];
+            }
 
-                    const sp = sheetPagos[i];
-                    const spClientNorm = norm(sp.cliente);
-                    const spDate = (sp.fechaServicio || '').split('T')[0];
-                    const spOffice = parseOfficeFromText(sp.oficina || '');
+            const trackedApts: TrackedAppointment[] = baseAppointments.map((apt, index) => {
+                const rawH = Number(apt.horas);
+                const hNeeded = (!isNaN(rawH) && rawH > 0) ? rawH : 1;
+                // Si la cita ya estaba marcada como pagada con boleta real previamente, no la sobreescribimos
+                const alreadyPaid = apt.estado === EstadoPago.Pagado && !!apt.boleta && !apt.boleta.toLowerCase().includes('pendiente');
+                return {
+                    apt,
+                    index,
+                    hoursNeeded: hNeeded,
+                    hoursRemaining: alreadyPaid ? 0 : hNeeded,
+                    isCovered: alreadyPaid,
+                    matchedPayments: [],
+                };
+            });
 
-                    const nameMatches = (spClientNorm.length >= 3 && appClientNorm.length >= 3) &&
-                        (appClientNorm.includes(spClientNorm) || spClientNorm.includes(appClientNorm));
-                    const officeMatches = spOffice === appOffice;
-                    const dateMatches = !spDate || spDate === appDate;
+            // Si alguna cita ya tenía asignado el ID del pago de Excel previamente, descontar esas horas del pago
+            trackedApts.forEach(tApt => {
+                if (tApt.isCovered && tApt.apt.boleta) {
+                    trackedSheetPayments.forEach(tSp => {
+                        if (tSp.sp.id && tApt.apt.boleta?.includes(tSp.sp.id)) {
+                            tSp.remainingHours = Math.max(0, Number((tSp.remainingHours - tApt.hoursNeeded).toFixed(2)));
+                            tSp.matchedAptIndices.add(tApt.index);
+                        }
+                    });
+                }
+            });
 
-                    if (nameMatches && officeMatches && dateMatches) {
-                        matchedIndex = i;
-                        break;
+            // Función atómica para asignar horas de un pago de Excel a una cita
+            const allocateHours = (spIdx: number, aptIdx: number) => {
+                const tSp = trackedSheetPayments[spIdx];
+                const tApt = trackedApts[aptIdx];
+                if (tSp.remainingHours <= 0 || tApt.hoursRemaining <= 0) return;
+
+                const alloc = Math.min(tSp.remainingHours, tApt.hoursRemaining);
+                tSp.remainingHours = Math.max(0, Number((tSp.remainingHours - alloc).toFixed(2)));
+                tApt.hoursRemaining = Math.max(0, Number((tApt.hoursRemaining - alloc).toFixed(2)));
+
+                tSp.matchedAptIndices.add(aptIdx);
+                tApt.matchedPayments.push({ sp: tSp.sp, hoursAllocated: alloc });
+
+                if (tApt.hoursRemaining <= 0.05) {
+                    tApt.isCovered = true;
+                }
+            };
+
+            // Conciliación estricta priorizando Teléfono, Fecha y Oficina:
+            // Cada pago de Excel es un saldo de horas para un Cliente específico (identificado con precisión por su Teléfono o Nombre),
+            // en una Oficina específica y una Fecha específica.
+
+            // PASO 1 (MÁXIMA PRIORIDAD): Coincidencia por TELÉFONO exacto + Misma Oficina + Misma Fecha
+            for (let s = 0; s < trackedSheetPayments.length; s++) {
+                const tSp = trackedSheetPayments[s];
+                if (tSp.remainingHours <= 0) continue;
+                const spDateService = normalizeDateStr(tSp.sp.fechaServicio);
+                const spDatePago = normalizeDateStr(tSp.sp.fechaPago);
+                const spOffice = normalizeOfficeKey(tSp.sp.oficina);
+
+                for (let a = 0; a < trackedApts.length; a++) {
+                    if (tSp.remainingHours <= 0) break;
+                    const tApt = trackedApts[a];
+                    if (tApt.isCovered) continue;
+
+                    // Si ambos tienen teléfono y coinciden exactamente
+                    if (!arePhonesMatching(tApt.apt.telefono, tSp.sp.telefono)) continue;
+
+                    // Validar Oficina estrictamente
+                    const aptOffice = normalizeOfficeKey(tApt.apt.oficina);
+                    if (spOffice !== aptOffice) continue;
+
+                    // Validar Fecha
+                    const aptDate = normalizeDateStr(tApt.apt.fecha);
+                    const matchDate = (spDateService && aptDate === spDateService) || (spDatePago && aptDate === spDatePago);
+                    if (!matchDate) continue;
+
+                    allocateHours(s, a);
+                }
+            }
+
+            // PASO 2: Coincidencia por TELÉFONO exacto + Misma Oficina (fechas adyacentes / cronológico)
+            for (let s = 0; s < trackedSheetPayments.length; s++) {
+                const tSp = trackedSheetPayments[s];
+                if (tSp.remainingHours <= 0) continue;
+                const spOffice = normalizeOfficeKey(tSp.sp.oficina);
+
+                const candidateIndices: number[] = [];
+                for (let a = 0; a < trackedApts.length; a++) {
+                    const tApt = trackedApts[a];
+                    if (tApt.isCovered) continue;
+                    if (!arePhonesMatching(tApt.apt.telefono, tSp.sp.telefono)) continue;
+                    
+                    if (normalizeOfficeKey(tApt.apt.oficina) === spOffice) {
+                        candidateIndices.push(a);
                     }
                 }
 
-                if (matchedIndex !== -1) {
-                    matchedSheetIndices.add(matchedIndex);
-                    matchedCount++;
-                    const matchingSheetPay = sheetPagos[matchedIndex];
-                    const statusStr = (matchingSheetPay.estado || '').toLowerCase();
-                    const estado = statusStr.includes('pagado') 
-                        ? EstadoPago.Pagado 
-                        : (statusStr.includes('credito') ? EstadoPago.CreditoMensual : EstadoPago.Pendiente);
+                candidateIndices.sort((i1, i2) => {
+                    const d1 = new Date(trackedApts[i1].apt.fecha).getTime() || 0;
+                    const d2 = new Date(trackedApts[i2].apt.fecha).getTime() || 0;
+                    return d1 - d2;
+                });
 
-                    return {
-                        ...appointment,
-                        estado,
-                        boleta: appointment.boleta || (matchingSheetPay.id ? `Ref: ${matchingSheetPay.id}` : 'Comprobante adjunto'),
-                        comprobanteImg: matchingSheetPay.comprobanteUrl || appointment.comprobanteImg || undefined,
-                        fechaPago: (matchingSheetPay.fechaPago || '').split('T')[0] || appDate,
-                        metodoPago: matchingSheetPay.metodoPago || appointment.metodoPago || 'Transferencia Bancaria',
-                        revisado: estado === EstadoPago.Pagado,
-                        notas: `${appointment.notas || ''} ${matchingSheetPay.notas ? `| ${matchingSheetPay.notas}` : ''}`.trim(),
-                    };
+                for (const a of candidateIndices) {
+                    if (tSp.remainingHours <= 0) break;
+                    allocateHours(s, a);
+                }
+            }
+
+            // PASO 3: Coincidencia por Nombre + Misma Oficina + Misma Fecha
+            // (CRUCIAL: Solo si NO hay conflicto de teléfonos entre la cita y el pago de Excel)
+            for (let s = 0; s < trackedSheetPayments.length; s++) {
+                const tSp = trackedSheetPayments[s];
+                if (tSp.remainingHours <= 0) continue;
+                const spDateService = normalizeDateStr(tSp.sp.fechaServicio);
+                const spDatePago = normalizeDateStr(tSp.sp.fechaPago);
+                const spOffice = normalizeOfficeKey(tSp.sp.oficina);
+
+                for (let a = 0; a < trackedApts.length; a++) {
+                    if (tSp.remainingHours <= 0) break;
+                    const tApt = trackedApts[a];
+                    if (tApt.isCovered) continue;
+
+                    // Si los teléfonos se contradicen, NUNCA emparejar (evita confusión de homónimos)
+                    if (arePhonesConflicting(tApt.apt.telefono, tSp.sp.telefono)) continue;
+
+                    // Validar Cliente por nombre
+                    const nameScore = calculateNameSimilarity(tApt.apt.cliente, tSp.sp.cliente);
+                    if (nameScore < 75) continue;
+
+                    // Validar Oficina estrictamente
+                    const aptOffice = normalizeOfficeKey(tApt.apt.oficina);
+                    if (spOffice !== aptOffice) continue;
+
+                    // Validar Fecha (debe coincidir con la fecha de servicio o la fecha de pago registrada en Excel)
+                    const aptDate = normalizeDateStr(tApt.apt.fecha);
+                    const matchDate = (spDateService && aptDate === spDateService) || (spDatePago && aptDate === spDatePago);
+                    if (!matchDate) continue;
+
+                    allocateHours(s, a);
+                }
+            }
+
+            // PASO 4: Si aún quedan horas en ese pago para ese Cliente y esa misma Oficina,
+            // y la clienta agendó en esa misma oficina citas adyacentes o de esa misma semana,
+            // se consumen las citas pendientes en orden cronológico (sin conflicto de teléfono).
+            for (let s = 0; s < trackedSheetPayments.length; s++) {
+                const tSp = trackedSheetPayments[s];
+                if (tSp.remainingHours <= 0) continue;
+                const spOffice = normalizeOfficeKey(tSp.sp.oficina);
+
+                const candidateIndices: number[] = [];
+                for (let a = 0; a < trackedApts.length; a++) {
+                    const tApt = trackedApts[a];
+                    if (tApt.isCovered) continue;
+                    if (arePhonesConflicting(tApt.apt.telefono, tSp.sp.telefono)) continue;
+                    if (calculateNameSimilarity(tApt.apt.cliente, tSp.sp.cliente) < 75) continue;
+                    
+                    // La oficina DEBE coincidir siempre
+                    if (normalizeOfficeKey(tApt.apt.oficina) === spOffice) {
+                        candidateIndices.push(a);
+                    }
                 }
 
-                // Si no se encuentra pago en Excel, la cita permanece tal como está (Pendiente)
-                return appointment;
+                candidateIndices.sort((i1, i2) => {
+                    const d1 = new Date(trackedApts[i1].apt.fecha).getTime() || 0;
+                    const d2 = new Date(trackedApts[i2].apt.fecha).getTime() || 0;
+                    return d1 - d2;
+                });
+
+                for (const a of candidateIndices) {
+                    if (tSp.remainingHours <= 0) break;
+                    allocateHours(s, a);
+                }
+            }
+
+            // 4. Consolidar citas actualizadas
+            let matchedCount = 0;
+            const reconciledAppointments: Payment[] = trackedApts.map(tApt => {
+                if (tApt.matchedPayments.length > 0) {
+                    matchedCount++;
+                    const primarySp = tApt.matchedPayments[0].sp;
+                    const boletas = Array.from(new Set(
+                        tApt.matchedPayments.map(m => m.sp.id ? `Ref: ${m.sp.id}` : 'Comprobante Excel')
+                    )).join(', ');
+
+                    const comprobanteUrl = tApt.matchedPayments.find(m => m.sp.comprobanteUrl)?.sp.comprobanteUrl || tApt.apt.comprobanteImg;
+                    const statusStr = (primarySp.estado || '').toLowerCase();
+                    const estado = statusStr.includes('credito') ? EstadoPago.CreditoMensual : EstadoPago.Pagado;
+
+                    let updatedNotas = tApt.apt.notas || '';
+                    const clientNotes = tApt.matchedPayments.map(m => m.sp.notas).filter(Boolean).join(' | ');
+                    if (clientNotes && !updatedNotas.includes(clientNotes)) {
+                        updatedNotas = `${updatedNotas} | ${clientNotes}`.trim();
+                    }
+
+                    // Notificación en notas si fue cubierto por una boleta agrupada de múltiples horas
+                    const spTotalH = Number(primarySp.horas) || 1;
+                    if (spTotalH > 1 && !updatedNotas.includes('Cubierto por boleta de')) {
+                        updatedNotas = `${updatedNotas} | Cubierto por boleta de ${spTotalH} hrs`.trim();
+                    }
+
+                    // Si el pago de Excel incluye teléfono, actualizarlo en el directorio local de clientes
+                    if (primarySp.cliente && primarySp.telefono) {
+                        try {
+                            const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                            const dir = JSON.parse(rawDir);
+                            dir[primarySp.cliente.trim()] = primarySp.telefono.trim();
+                            localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
+                        } catch {}
+                    }
+
+                    return {
+                        ...tApt.apt,
+                        telefono: tApt.apt.telefono || primarySp.telefono,
+                        estado,
+                        boleta: tApt.apt.boleta || boletas,
+                        comprobanteImg: comprobanteUrl || undefined,
+                        fechaPago: normalizeDateStr(primarySp.fechaPago) || normalizeDateStr(primarySp.fechaServicio) || tApt.apt.fecha,
+                        metodoPago: primarySp.metodoPago || tApt.apt.metodoPago || 'Transferencia Bancaria',
+                        revisado: estado === EstadoPago.Pagado,
+                        notas: updatedNotas,
+                    };
+                }
+                return tApt.apt;
             });
 
-            // 3. Pagos de Excel que no coincidieron con ninguna cita
-            const leftOverPayments = sheetPagos.filter((_, idx) => !matchedSheetIndices.has(idx));
+            // 5. Pagos de Excel que quedaron con horas pendientes de asignar
+            const leftOverPayments: SheetPaymentRow[] = [];
+            trackedSheetPayments.forEach(tSp => {
+                if (tSp.matchedAptIndices.size === 0) {
+                    leftOverPayments.push(tSp.sp);
+                } else if (tSp.remainingHours > 0.05) {
+                    leftOverPayments.push({
+                        ...tSp.sp,
+                        horas: tSp.remainingHours,
+                        monto: tSp.remainingHours * 65,
+                        notas: `${tSp.sp.notas || ''} [${tSp.remainingHours} de ${tSp.totalHours} hrs por asignar]`.trim(),
+                    });
+                }
+            });
 
             setUnmatchedPayments(leftOverPayments);
             try {
@@ -311,18 +682,22 @@ const App: React.FC = () => {
                 payments: reconciledAppointments,
             }));
 
-            const unmatchedAptCount = reconciledAppointments.length - matchedCount;
+            const totalPagadas = reconciledAppointments.filter(p => p.estado === EstadoPago.Pagado).length;
+            const totalPendientes = reconciledAppointments.filter(p => p.estado === EstadoPago.Pendiente).length;
+
             if (leftOverPayments.length > 0) {
-                setSyncFeedback(`Conciliacion: ${matchedCount} pagadas | ${leftOverPayments.length} pagos de Excel sin emparejar`);
+                setSyncFeedback(`Conciliacion: ${matchedCount} citas cubiertas | ${leftOverPayments.length} pagos de Excel con horas pendientes`);
+                setIsUnmatchedColumnOpen(true);
             } else {
-                setSyncFeedback(`Conciliacion: ${matchedCount} pagadas | ${unmatchedAptCount} pendientes`);
+                setSyncFeedback(`Conciliacion exitosa: ${matchedCount} citas cuadradas (${totalPagadas} pagadas en total)`);
+                setIsUnmatchedColumnOpen(false);
             }
             setTimeout(() => setSyncFeedback(null), 5000);
 
             return {
                 total: reconciledAppointments.length,
                 matchedCount,
-                unmatchedCount: unmatchedAptCount,
+                unmatchedCount: totalPendientes,
                 unmatchedExcelCount: leftOverPayments.length,
             };
         } catch (err: any) {
@@ -333,7 +708,7 @@ const App: React.FC = () => {
         } finally {
             setIsSyncing(false);
         }
-    }, [setAppState]);
+    }, [calculateNameSimilarity, normalizeDateStr, normalizeOfficeKey, setAppState]);
 
     // Emparejar manualmente un pago de Excel con una cita existente
     const handleMatchUnmatchedPayment = useCallback((unmatched: SheetPaymentRow, appointmentId: string) => {
@@ -445,7 +820,6 @@ const App: React.FC = () => {
     const [isConfirmDeleteAllOpen, setIsConfirmDeleteAllOpen] = useState(false);
     const [isConfirmDeleteSelectedOpen, setIsConfirmDeleteSelectedOpen] = useState(false);
     
-    const [isDailyReportModalOpen, setIsDailyReportModalOpen] = useState(false);
     const [isEstimatesModalOpen, setIsEstimatesModalOpen] = useState(false);
     const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
     const [isProofModalOpen, setIsProofModalOpen] = useState(false);
@@ -466,8 +840,23 @@ const App: React.FC = () => {
     const filteredPayments = useMemo(() => {
         return payments
             .filter(p => {
-                 // Basic filters
-                const searchTermMatch = p.cliente.toLowerCase().includes(filters.searchTerm.toLowerCase());
+                 // Basic filters: Search matches client name, full phone or phone digits
+                const rawSearch = (filters.searchTerm || '').trim();
+                const searchLower = rawSearch.toLowerCase();
+                const searchDigits = rawSearch.replace(/\D/g, '');
+                const paymentPhoneDigits = (p.telefono || '').replace(/\D/g, '');
+
+                let searchTermMatch = true;
+                if (rawSearch) {
+                    const matchesName = p.cliente.toLowerCase().includes(searchLower);
+                    const matchesPhone = Boolean(p.telefono && p.telefono.toLowerCase().includes(searchLower));
+                    const matchesPhoneDigits = Boolean(
+                        searchDigits.length >= 4 && paymentPhoneDigits && 
+                        (paymentPhoneDigits.includes(searchDigits) || searchDigits.includes(paymentPhoneDigits))
+                    );
+                    searchTermMatch = matchesName || matchesPhone || matchesPhoneDigits;
+                }
+
                 const officeMatch = filters.oficina.length === 0 || filters.oficina.includes(p.oficina);
                 const statusMatch = filters.estado === 'todos' || p.estado === filters.estado;
 
@@ -629,6 +1018,15 @@ const App: React.FC = () => {
             savedPayment = { ...paymentData, id: newId, revisado: false };
         }
 
+        if (savedPayment.cliente && savedPayment.telefono) {
+            try {
+                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                const dir = JSON.parse(rawDir);
+                dir[savedPayment.cliente.trim()] = savedPayment.telefono.trim();
+                localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
+            } catch {}
+        }
+
         setAppState(prevState => {
             const newPayments = editingPayment
                 ? prevState.payments.map(p => p.id === editingPayment.id ? savedPayment : p)
@@ -637,16 +1035,6 @@ const App: React.FC = () => {
         });
         setIsFormModalOpen(false);
         setEditingPayment(null);
-
-        // Enviar pago registrado a Google Sheets
-        sendPaymentToGoogleSheets(savedPayment).then(res => {
-            if (res.success) {
-                setSyncFeedback(`Pago de ${savedPayment.cliente} registrado y guardado en Google Sheet`);
-                setTimeout(() => setSyncFeedback(null), 4000);
-            }
-        }).catch(err => {
-            console.warn('[Google Sheets] Error enviando pago guardado:', err);
-        });
     };
 
     const handleDeletePayment = (id: string) => {
@@ -674,7 +1062,6 @@ const App: React.FC = () => {
     };
 
     const handleToggleStatus = (id: string) => {
-        let syncedPayment: Payment | null = null;
         setAppState(prevState => {
             const newPayments = prevState.payments.map(p => {
                 if (p.id === id) {
@@ -707,28 +1094,12 @@ const App: React.FC = () => {
                         default:
                             newStatus = p.estado;
                     }
-                    const updated = { ...p, estado: newStatus, monto: newMonto, originalMonto: newOriginalMonto, fechaPago: newFechaPago };
-                    if (newStatus === EstadoPago.Pagado) {
-                        syncedPayment = updated;
-                    }
-                    return updated;
+                    return { ...p, estado: newStatus, monto: newMonto, originalMonto: newOriginalMonto, fechaPago: newFechaPago };
                 }
                 return p;
             });
             return { ...prevState, payments: newPayments };
         });
-
-        // Si se marcó como Pagado, sincronizar con Google Sheets
-        if (syncedPayment) {
-            sendPaymentToGoogleSheets(syncedPayment).then(res => {
-                if (res.success) {
-                    setSyncFeedback(`Pago de ${(syncedPayment as Payment).cliente} sincronizado en Google Sheet`);
-                    setTimeout(() => setSyncFeedback(null), 4000);
-                }
-            }).catch(err => {
-                console.warn('[Google Sheets] Error al sincronizar cambio de estado:', err);
-            });
-        }
     };
 
     const handleToggleReviewed = (id: string) => {
@@ -739,11 +1110,62 @@ const App: React.FC = () => {
     };
 
     const handleMerge = (draggedId: string, targetId: string) => {
+        let mergedSummary: { cliente: string; totalMonto: number; totalHoras: number } | null = null;
+        let errorMessage: string | null = null;
+
         setAppState(prevState => {
             const dragged = prevState.payments.find(p => p.id === draggedId);
             const target = prevState.payments.find(p => p.id === targetId);
         
-            if (!dragged || !target || dragged.id === target.id || dragged.cliente !== target.cliente || dragged.oficina !== target.oficina || dragged.fecha !== target.fecha) {
+            if (!dragged || !target || dragged.id === target.id) {
+                return prevState;
+            }
+
+            // Normalizadores robustos
+            const cleanStr = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+            
+            const normDate = (d?: string) => {
+                if (!d) return '';
+                const raw = String(d).trim().split('T')[0].split(' ')[0];
+                const parts = raw.split(/[\/\-]/);
+                if (parts.length === 3) {
+                    if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+                    if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+                return raw;
+            };
+
+            const normOffice = (o?: string) => {
+                if (!o) return '';
+                const t = String(o).toUpperCase().replace(/[^A-Z0-9]/g, '');
+                if (t.includes('1201')) return '1201';
+                if (t.includes('203B') || t.includes('203')) return '203B';
+                if (t.includes('211B') || t.includes('211')) return '211B';
+                if (t.includes('232B') || t.includes('232')) return '232B';
+                if (t.includes('323') || t.includes('VITALE') || t.includes('DM')) return '323';
+                return t;
+            };
+
+            const clientA = cleanStr(dragged.cliente);
+            const clientB = cleanStr(target.cliente);
+            const sameClient = clientA === clientB || 
+                (clientA.length >= 4 && clientB.length >= 4 && (clientA.includes(clientB) || clientB.includes(clientA))) ||
+                clientA.split(/\s+/).filter(w => w.length >= 3 && !['dr', 'dra', 'lic', 'licda'].includes(w)).some(w => clientB.includes(w));
+
+            const sameOffice = normOffice(dragged.oficina) === normOffice(target.oficina);
+            const sameDate = normDate(dragged.fecha) === normDate(target.fecha);
+
+            const sameRecordId = Boolean(
+                dragged.recordId && target.recordId && 
+                String(dragged.recordId).trim().length > 0 && 
+                String(dragged.recordId).trim() === String(target.recordId).trim()
+            );
+
+            // Permitir fusión si es misma persona + mismo día, O misma persona + misma oficina, O mismo ID de reserva
+            const canMerge = (sameClient && sameDate) || (sameClient && sameOffice) || sameRecordId;
+
+            if (!canMerge) {
+                errorMessage = `No se pueden fusionar: los registros pertenecen a personas diferentes ("${dragged.cliente}" y "${target.cliente}"). Solo se pueden fusionar citas del mismo cliente.`;
                 return prevState;
             }
         
@@ -759,32 +1181,91 @@ const App: React.FC = () => {
             );
             const combinedBoletas = Array.from(allBoletas).join(', ');
         
-            const mergeLog = `\n--- Registro Fusionado ---\nID Original: ${dragged.recordId || 'N/A'}\nBoleta: ${dragged.boleta}\nMonto: ${formatCurrency(dragged.monto)}\n--------------------------`;
+            const mergeLog = `\n--- Registro Fusionado ---\nFecha: ${dragged.fecha}\nOficina: ${dragged.oficina}\nID Original: ${dragged.recordId || 'N/A'}\nBoleta: ${dragged.boleta || 'N/A'}\nHoras: ${dragged.horas || 1}h\nMonto: ${formatCurrency(dragged.monto)}\n--------------------------`;
             
             const newNotes = [target.notas, dragged.notas, mergeLog].filter(Boolean).join('\n\n').trim();
-        
+            const totalMonto = Number(target.monto || 0) + Number(dragged.monto || 0);
+            const totalHoras = (Number(target.horas) || 1) + (Number(dragged.horas) || 1);
+            const isAnyPaid = target.estado === EstadoPago.Pagado || dragged.estado === EstadoPago.Pagado;
+
+            mergedSummary = { cliente: target.cliente, totalMonto, totalHoras };
+
             const mergedPayment: Payment = {
                 ...target,
                 recordId: combinedRecordIds || undefined,
                 telefono: target.telefono || dragged.telefono,
-                monto: target.monto + dragged.monto,
-                horas: (target.horas || 0) + (dragged.horas || 0),
-                boleta: combinedBoletas,
+                monto: totalMonto,
+                horas: totalHoras,
+                boleta: combinedBoletas || target.boleta || dragged.boleta,
+                comprobanteImg: target.comprobanteImg || dragged.comprobanteImg,
+                fechaPago: target.fechaPago || dragged.fechaPago,
+                metodoPago: target.metodoPago || dragged.metodoPago,
                 notas: newNotes,
-                revisado: false,
+                revisado: isAnyPaid || target.revisado || dragged.revisado,
+                estado: isAnyPaid ? EstadoPago.Pagado : target.estado,
             };
         
             const newPayments = prevState.payments.map(p => p.id === target.id ? mergedPayment : p).filter(p => p.id !== dragged.id);
             return { ...prevState, payments: newPayments };
         });
+
+        if (errorMessage) {
+            alert(errorMessage);
+        } else if (mergedSummary) {
+            setSyncFeedback(`Fusionado con éxito: ${(mergedSummary as any).cliente} (${(mergedSummary as any).totalHoras} hrs • Q${(mergedSummary as any).totalMonto})`);
+            setTimeout(() => setSyncFeedback(null), 4000);
+        }
     };
+
+    const handleMergeSelected = useCallback(() => {
+        if (selectedIds.size < 2) return;
+        const selectedList = payments.filter(p => selectedIds.has(p.id));
+        if (selectedList.length < 2) return;
+
+        const first = selectedList[0];
+        const cleanStr = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+        const clientA = cleanStr(first.cliente);
+
+        const allSameClient = selectedList.every(p => {
+            const clientB = cleanStr(p.cliente);
+            return clientA === clientB || clientA.includes(clientB) || clientB.includes(clientA);
+        });
+
+        if (!allSameClient) {
+            alert("Para fusionar los registros seleccionados, todos deben pertenecer al mismo cliente.");
+            return;
+        }
+
+        if (!window.confirm(`¿Deseas fusionar estos ${selectedList.length} registros de ${first.cliente} en uno solo? Se sumarán todas sus horas y montos automáticamente.`)) {
+            return;
+        }
+
+        const targetId = first.id;
+        for (let i = 1; i < selectedList.length; i++) {
+            handleMerge(selectedList[i].id, targetId);
+        }
+        setSelectedIds(new Set());
+    }, [selectedIds, payments]);
 
     const exportPaymentsToXLSX = useCallback((paymentsToExport: Payment[], fileName: string) => {
         if (!(window as any).XLSX) {
             alert('La librería para exportar a Excel no está disponible.');
             return;
         }
-        const dataToExport = paymentsToExport.map(({ id, revisado, originalMonto, comprobanteImg, ...rest }) => rest);
+        const dataToExport = paymentsToExport.map(p => ({
+            'Fecha Servicio': p.fecha || '',
+            'ID Registro': p.recordId || '',
+            'Cliente': p.cliente || '',
+            'Oficina': p.oficina ? `Oficina ${p.oficina}` : '',
+            'Horas': p.horas !== undefined ? p.horas : 1,
+            'Monto (Q)': p.monto || 0,
+            'Estado': p.estado || '',
+            'Fecha de Pago': p.fechaPago || '',
+            'Método de Pago': p.metodoPago || '',
+            'No. Boleta / Ref': p.boleta || '',
+            'Teléfono': p.telefono || '',
+            'Notas': p.notas || ''
+        }));
         const worksheet = (window as any).XLSX.utils.json_to_sheet(dataToExport);
         const workbook = (window as any).XLSX.utils.book_new();
         (window as any).XLSX.utils.book_append_sheet(workbook, worksheet, 'Pagos');
@@ -848,7 +1329,21 @@ const App: React.FC = () => {
                                                          it.telephone || it.mobile || it.celular ||
                                                          (Array.isArray(it.answers) ? it.answers.find((a: any) => /tel|phone|cel|whats/i.test(a.question || a.name || ''))?.value : undefined) ||
                                                          (Array.isArray(it.custom_fields) ? it.custom_fields.find((f: any) => /tel|phone|cel|whats/i.test(f.name || ''))?.value : undefined);
-                                        const cleanPhone = rawPhone ? String(rawPhone).replace(/[^\d+]/g, '') : undefined;
+                                        let cleanPhone = rawPhone ? String(rawPhone).replace(/[^\d+]/g, '') : undefined;
+                                        if (!cleanPhone && name) {
+                                            try {
+                                                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                                                const dir = JSON.parse(rawDir);
+                                                if (dir[name]) cleanPhone = String(dir[name]).replace(/\D/g, '');
+                                            } catch {}
+                                        } else if (cleanPhone && name) {
+                                            try {
+                                                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                                                const dir = JSON.parse(rawDir);
+                                                dir[name] = cleanPhone;
+                                                localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
+                                            } catch {}
+                                        }
 
                                         return {
                                             id: `sm-json-${it.id || it.uuid || idx}-${Date.now()}`,
@@ -900,7 +1395,7 @@ const App: React.FC = () => {
                             'cliente', 'client', 'oficina', 'meetingtype', 'hora', 
                             'duration', 'monto', 'boleta', 'factura', 'fecha', 
                             'dateandtime', 'estado', 'metodopago', 'nota', 
-                            'telefono', 'clientphonenumber'
+                            'telefono', 'clientphonenumber', 'phone', 'phonenumber', 'telephone', 'celular', 'movil', 'mobile', 'whatsapp', 'clientphone'
                         ]);
 
                         const newPayments: Payment[] = json.map((row): Payment | null => {
@@ -964,8 +1459,27 @@ const App: React.FC = () => {
                                 ? estadoValue as EstadoPago
                                 : EstadoPago.Pendiente;
                             
-                            const telefonoRaw = findValue(['telefono', 'clientphonenumber']);
-                            const telefono = telefonoRaw ? String(telefonoRaw).replace(/\D/g, '') : undefined;
+                            const telefonoRaw = findValue(['telefono', 'clientphonenumber', 'phone', 'phonenumber', 'telephone', 'celular', 'movil', 'mobile', 'whatsapp', 'clientphone']);
+                            let telefono = telefonoRaw ? String(telefonoRaw).replace(/\D/g, '') : undefined;
+
+                            // Si no vino en el archivo, intentar autocompletar desde el directorio local guardado
+                            const clientNameClean = String(cliente).trim();
+                            if (!telefono && clientNameClean) {
+                                try {
+                                    const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                                    const dir = JSON.parse(rawDir);
+                                    if (dir[clientNameClean]) {
+                                        telefono = String(dir[clientNameClean]).replace(/\D/g, '');
+                                    }
+                                } catch {}
+                            } else if (telefono && clientNameClean) {
+                                try {
+                                    const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+                                    const dir = JSON.parse(rawDir);
+                                    dir[clientNameClean] = telefono;
+                                    localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
+                                } catch {}
+                            }
                             
                             const initialNotas = findValue(['nota']);
 
@@ -1090,34 +1604,109 @@ const App: React.FC = () => {
             .filter(p => {
                 const officeMatch = filters.oficina.length === 0 || filters.oficina.includes(p.oficina);
                 const statusMatch = filters.estado === 'todos' || p.estado === filters.estado;
-                const [paymentYear, paymentMonth] = p.fecha.split('-').map(Number);
-                const monthYearMatch = (paymentMonth - 1) === filters.mes && paymentYear === filters.año;
+                const [paymentYear, paymentMonth] = (p.fecha || '').split('-').map(Number);
+                const monthYearMatch = (filters.mes === -1 || (paymentMonth - 1) === filters.mes) && 
+                                       (filters.año === 0 || paymentYear === filters.año);
                 const serviceDateMatch = !filters.fecha || p.fecha === filters.fecha;
                 const paymentDateMatch = !filters.fechaPago || (p.fechaPago && p.fechaPago === filters.fechaPago);
                 return officeMatch && statusMatch && monthYearMatch && serviceDateMatch && paymentDateMatch;
-            })
+            });
     }, [payments, filters.oficina, filters.estado, filters.mes, filters.año, filters.fecha, filters.fechaPago]);
 
     const handleRotateClient = useCallback(() => {
-        const allClients = [...new Set(
-            paymentsForClientRotation
-                .map(p => p.cliente)
-                .sort((a, b) => a.localeCompare(b))
-        )];
+        // Pool de citas para rotación (primero la vista filtrada actual o todos los registros si está vacía)
+        const pool = paymentsForClientRotation.length > 0 ? paymentsForClientRotation : payments;
 
-        if (allClients.length === 0) {
+        // Agrupamos clientes por número de teléfono único
+        const phoneGroups = new Map<string, { phone: string; clientName: string; count: number }>();
+        const clientsWithoutPhone = new Map<string, number>();
+
+        pool.forEach(p => {
+            const rawPhone = (p.telefono || '').trim();
+            const digits = rawPhone.replace(/\D/g, '');
+            if (digits && digits.length >= 7) {
+                const normP = digits.length >= 8 ? digits.slice(-8) : digits;
+                if (!phoneGroups.has(normP)) {
+                    phoneGroups.set(normP, {
+                        phone: rawPhone,
+                        clientName: (p.cliente || '').trim(),
+                        count: 1
+                    });
+                } else {
+                    phoneGroups.get(normP)!.count++;
+                }
+            } else if (p.cliente && p.cliente.trim()) {
+                const c = p.cliente.trim();
+                clientsWithoutPhone.set(c, (clientsWithoutPhone.get(c) || 0) + 1);
+            }
+        });
+
+        interface RouletteOption {
+            filterTerm: string;
+            displayName: string;
+            phone?: string;
+            client: string;
+        }
+
+        const options: RouletteOption[] = [];
+
+        // 1. Prioridad: Números de teléfono (ordenados)
+        Array.from(phoneGroups.values())
+            .sort((a, b) => a.phone.localeCompare(b.phone))
+            .forEach(item => {
+                options.push({
+                    filterTerm: item.phone,
+                    displayName: `📞 ${item.phone} • ${item.clientName}`,
+                    phone: item.phone,
+                    client: item.clientName
+                });
+            });
+
+        // 2. Clientes históricos sin teléfono registrado aún
+        Array.from(clientsWithoutPhone.keys())
+            .sort((a, b) => a.localeCompare(b))
+            .forEach(clientName => {
+                options.push({
+                    filterTerm: clientName,
+                    displayName: `👤 ${clientName}`,
+                    client: clientName
+                });
+            });
+
+        if (options.length === 0) {
             setFilters(prev => ({ ...prev, searchTerm: '' }));
             setRotatingClientIndex(null);
             return;
         }
-        
-        const nextIndex = (rotatingClientIndex === null || rotatingClientIndex >= allClients.length - 1)
+
+        // Detectar si el término actual coincide con alguna opción
+        const currentSearch = (filters.searchTerm || '').trim().toLowerCase();
+        const currentDigits = currentSearch.replace(/\D/g, '');
+
+        const currentIdx = currentSearch
+            ? options.findIndex(opt => {
+                if (opt.phone) {
+                    const optDigits = opt.phone.replace(/\D/g, '');
+                    if (currentDigits && currentDigits.length >= 4 && (optDigits.includes(currentDigits) || currentDigits.includes(optDigits))) {
+                        return true;
+                    }
+                }
+                return opt.filterTerm.toLowerCase() === currentSearch || opt.client.toLowerCase() === currentSearch;
+            })
+            : -1;
+
+        const nextIndex = (currentIdx === -1 || currentIdx >= options.length - 1)
             ? 0
-            : rotatingClientIndex + 1;
+            : currentIdx + 1;
+
+        const selected = options[nextIndex];
 
         setRotatingClientIndex(nextIndex);
-        setFilters(prev => ({ ...prev, searchTerm: allClients[nextIndex] }));
-    }, [paymentsForClientRotation, rotatingClientIndex]);
+        setFilters(prev => ({ ...prev, searchTerm: selected.filterTerm }));
+
+        setSyncFeedback(`Ruleta: ${selected.displayName} (${nextIndex + 1}/${options.length})`);
+        setTimeout(() => setSyncFeedback(null), 3000);
+    }, [paymentsForClientRotation, payments, filters.searchTerm]);
     
     const handleClearFilters = useCallback(() => {
         setFilters(getInitialFilters());
@@ -1141,7 +1730,6 @@ const App: React.FC = () => {
     const totalPendingCount = useMemo(() => payments.filter(p => p.estado === EstadoPago.Pendiente || p.estado === EstadoPago.CreditoMensual).length, [payments]);
     const totalPaidCount = useMemo(() => payments.filter(p => p.estado === EstadoPago.Pagado).length, [payments]);
 
-    const showDailyReport = useCallback(() => setIsDailyReportModalOpen(true), []);
     const showEstimates = useCallback(() => setIsEstimatesModalOpen(true), []);
     
     const onRequestPayment = useCallback(() => {
@@ -1226,7 +1814,6 @@ const App: React.FC = () => {
                     setFilters={setFilters}
                     onAddPayment={handleAddPayment}
                     onExportToExcel={handleExport}
-                    onShowDailyReport={showDailyReport}
                     onShowEstimates={showEstimates}
                     onShowClientVolume={() => setIsClientVolumeModalOpen(true)}
                     hasFilteredResults={filteredPayments.length > 0}
@@ -1308,34 +1895,39 @@ const App: React.FC = () => {
                     </div>
                 )}
 
-                <div className="w-full">
-                    <PaymentTable 
-                        payments={filteredPayments} 
-                        onEdit={handleEditPayment} 
-                        onDelete={handleDeletePayment}
-                        onToggleStatus={handleToggleStatus}
-                        onToggleReviewed={handleToggleReviewed}
-                        onMerge={handleMerge}
-                        onViewImage={handleViewImage}
-                        isSelectionMode={isSelectionMode}
-                        selectedIds={selectedIds}
-                        onSelectPayment={handleSelectPayment}
-                        onSelectAll={handleSelectAll}
-                        onUpdatePayment={handleUpdatePayment}
-                        onMatchUnmatched={handleMatchUnmatchedPayment}
-                    />
-                </div>
+                {/* Contenedor principal: Tabla de Citas + Columna de Pagos Sin Emparejar (Drag & Drop) */}
+                <div className="flex flex-col xl:flex-row items-start gap-6 w-full">
+                    <div className="flex-1 min-w-0 w-full">
+                        <PaymentTable 
+                            payments={filteredPayments} 
+                            onEdit={handleEditPayment} 
+                            onDelete={handleDeletePayment}
+                            onToggleStatus={handleToggleStatus}
+                            onToggleReviewed={handleToggleReviewed}
+                            onMerge={handleMerge}
+                            onViewImage={handleViewImage}
+                            isSelectionMode={isSelectionMode}
+                            selectedIds={selectedIds}
+                            onSelectPayment={handleSelectPayment}
+                            onSelectAll={handleSelectAll}
+                            onUpdatePayment={handleUpdatePayment}
+                            onMatchUnmatched={handleMatchUnmatchedPayment}
+                        />
+                    </div>
 
-                {unmatchedPayments.length > 0 && isUnmatchedColumnOpen && (
-                    <UnmatchedColumn
-                        isOpen={isUnmatchedColumnOpen}
-                        onClose={() => setIsUnmatchedColumnOpen(false)}
-                        unmatchedPayments={unmatchedPayments}
-                        appointments={payments}
-                        onMatch={handleMatchUnmatchedPayment}
-                        onDismiss={handleDismissUnmatchedPayment}
-                    />
-                )}
+                    {unmatchedPayments.length > 0 && isUnmatchedColumnOpen && (
+                        <div className="w-full xl:w-80 2xl:w-96 shrink-0 xl:sticky xl:top-6">
+                            <UnmatchedColumn
+                                isOpen={isUnmatchedColumnOpen}
+                                onClose={() => setIsUnmatchedColumnOpen(false)}
+                                unmatchedPayments={unmatchedPayments}
+                                appointments={payments}
+                                onMatch={handleMatchUnmatchedPayment}
+                                onDismiss={handleDismissUnmatchedPayment}
+                            />
+                        </div>
+                    )}
+                </div>
                 <ActionFooter 
                     onRequestPayment={onRequestPayment}
                     onGenerateProof={onGenerateProof}
@@ -1344,6 +1936,7 @@ const App: React.FC = () => {
                     isSelectionMode={isSelectionMode}
                     selectedCount={selectedIds.size}
                     onDeleteSelected={handleBulkDelete}
+                    onMergeSelected={handleMergeSelected}
                 />
             </main>
             
@@ -1394,12 +1987,6 @@ const App: React.FC = () => {
                 onConfirmKeepAll={handleKeepAllDuplicates}
             />
 
-            <DailyReportModal
-                isOpen={isDailyReportModalOpen}
-                onClose={() => setIsDailyReportModalOpen(false)}
-                payments={getTargetPayments()}
-            />
-            
             <EstimatesModal
                 isOpen={isEstimatesModalOpen}
                 onClose={() => setIsEstimatesModalOpen(false)}
@@ -1437,15 +2024,6 @@ const App: React.FC = () => {
                 isOpen={isGoogleSheetsModalOpen}
                 onClose={() => setIsGoogleSheetsModalOpen(false)}
                 payments={payments}
-            />
-
-            <UnmatchedPaymentsModal
-                isOpen={isUnmatchedModalOpen}
-                onClose={() => setIsUnmatchedModalOpen(false)}
-                unmatchedPayments={unmatchedPayments}
-                appointments={payments}
-                onMatch={handleMatchUnmatchedPayment}
-                onDismiss={handleDismissUnmatchedPayment}
             />
 
         </div>

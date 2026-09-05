@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Payment, EstadoPago, Oficina } from '../types';
 
 interface ClientVolumeModalProps {
@@ -35,6 +35,27 @@ export interface ClientStats {
     percentOfTotal: number;
 }
 
+// Extractor de fecha robusto que soporta ISO (YYYY-MM-DD), DD/MM/YYYY y variantes
+const parseDateParts = (dateStr?: string): { year: number; month: number } | null => {
+    if (!dateStr || typeof dateStr !== 'string') return null;
+    const clean = dateStr.trim();
+    // ISO YYYY-MM-DD
+    const isoMatch = clean.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+    if (isoMatch) {
+        return { year: parseInt(isoMatch[1], 10), month: parseInt(isoMatch[2], 10) - 1 };
+    }
+    // DD/MM/YYYY o DD-MM-YYYY
+    const ddmmyyyyMatch = clean.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})/);
+    if (ddmmyyyyMatch) {
+        return { year: parseInt(ddmmyyyyMatch[3], 10), month: parseInt(ddmmyyyyMatch[2], 10) - 1 };
+    }
+    const d = new Date(clean);
+    if (!isNaN(d.getTime())) {
+        return { year: d.getFullYear(), month: d.getMonth() };
+    }
+    return null;
+};
+
 const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
     isOpen,
     onClose,
@@ -42,8 +63,9 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
     initialMonth,
     initialYear,
 }) => {
-    const [selectedMonth, setSelectedMonth] = useState<number>(initialMonth);
-    const [selectedYear, setSelectedYear] = useState<number>(initialYear);
+    const currentYear = new Date().getFullYear();
+    const [selectedMonth, setSelectedMonth] = useState<number>(initialMonth !== undefined ? initialMonth : new Date().getMonth());
+    const [selectedYear, setSelectedYear] = useState<number>(initialYear && initialYear !== -1 ? initialYear : currentYear);
     const [metric, setMetric] = useState<MetricType>('amount');
     const [sortBy, setSortBy] = useState<SortOption>('desc');
     const [searchTerm, setSearchTerm] = useState('');
@@ -52,27 +74,40 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
     const [viewMode, setViewMode] = useState<'chart' | 'table'>('chart');
     const [topLimit, setTopLimit] = useState<number | 'all'>('all');
 
-    // Keep initial synced when modal opens
+    // Años disponibles calculados de los pagos reales
+    const availableYears = useMemo(() => {
+        const set = new Set<number>([currentYear]);
+        payments.forEach(p => {
+            const parts = parseDateParts(p.fecha);
+            if (parts) set.add(parts.year);
+        });
+        return Array.from(set).sort((a, b) => b - a);
+    }, [payments, currentYear]);
+
+    // Sincronizar filtros al abrir
     React.useEffect(() => {
         if (isOpen) {
-            setSelectedMonth(initialMonth);
-            setSelectedYear(initialYear);
+            setSelectedMonth(initialMonth !== undefined ? initialMonth : new Date().getMonth());
+            setSelectedYear(initialYear && initialYear !== -1 ? initialYear : currentYear);
             setSelectedClientForDetail(null);
+            setSearchTerm('');
         }
-    }, [isOpen, initialMonth, initialYear]);
+    }, [isOpen, initialMonth, initialYear, currentYear]);
 
-    // Filter payments strictly for the selected month & year & office
+    // Filtrar pagos para el periodo seleccionado
     const monthPayments = useMemo(() => {
         return payments.filter(p => {
             if (!p.fecha) return false;
-            const [y, m] = p.fecha.split('-').map(Number);
-            const matchesDate = y === selectedYear && (m - 1) === selectedMonth;
+            const parts = parseDateParts(p.fecha);
+            if (!parts) return false;
+            const matchesYear = selectedYear === -1 || parts.year === selectedYear;
+            const matchesMonth = selectedMonth === -1 || parts.month === selectedMonth;
             const matchesOffice = selectedOffice === 'all' || p.oficina === selectedOffice;
-            return matchesDate && matchesOffice;
+            return matchesYear && matchesMonth && matchesOffice;
         });
     }, [payments, selectedMonth, selectedYear, selectedOffice]);
 
-    // Aggregate statistics by client
+    // Agrupar estadísticas por cliente
     const { clientStatsList, totalMonthAmount, totalMonthCount, maxMetricValue } = useMemo(() => {
         const map = new Map<string, {
             totalAmount: number;
@@ -139,7 +174,6 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
             };
         });
 
-        // Calculate max metric value for scaling bars
         let maxVal = 1;
         list.forEach(c => {
             const val = metric === 'amount' ? c.totalAmount :
@@ -156,7 +190,7 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
         };
     }, [monthPayments, metric]);
 
-    // Filter & Sort clients
+    // Filtrar y ordenar clientes
     const filteredClients = useMemo(() => {
         let result = clientStatsList.filter(c => 
             c.cliente.toLowerCase().includes(searchTerm.toLowerCase().trim())
@@ -183,7 +217,7 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
         return result;
     }, [clientStatsList, searchTerm, sortBy, metric, topLimit]);
 
-    // Details for single selected client
+    // Detalle de pagos del cliente seleccionado
     const selectedClientPayments = useMemo(() => {
         if (!selectedClientForDetail) return [];
         return monthPayments.filter(p => p.cliente === selectedClientForDetail);
@@ -191,28 +225,32 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
 
     if (!isOpen) return null;
 
+    const periodLabel = selectedMonth === -1 
+        ? `Todo el año ${selectedYear === -1 ? '' : selectedYear}`
+        : `${monthNames[selectedMonth]} ${selectedYear === -1 ? '' : selectedYear}`;
+
     return (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-            <div className="bg-white rounded-3xl shadow-google-lg w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden border border-[#dadce0] animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+            <div className="bg-white rounded-2xl sm:rounded-3xl shadow-google-lg w-full max-w-5xl max-h-[94vh] flex flex-col overflow-hidden border border-[#dadce0] animate-in fade-in zoom-in-95 duration-150">
                 {/* Header */}
-                <div className="bg-[#f8fafd] border-b border-[#dadce0] px-6 py-4 flex items-center justify-between flex-shrink-0">
+                <div className="bg-[#f8fafd] border-b border-[#dadce0] px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between flex-shrink-0">
                     <div className="flex items-center gap-3">
-                        <span className="w-10 h-10 rounded-2xl bg-blue-50 text-[#1a73e8] flex items-center justify-center font-bold shadow-xs border border-blue-200">
+                        <span className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl sm:rounded-2xl bg-blue-50 text-[#1a73e8] flex items-center justify-center font-bold shadow-xs border border-blue-200">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                             </svg>
                         </span>
                         <div>
-                            <h2 className="text-lg font-bold text-[#202124]">Comparativa de Volumen por Cliente</h2>
-                            <p className="text-xs text-[#5f6368]">
-                                Visualización de pagos realizados en {monthNames[selectedMonth]} {selectedYear}
+                            <h2 className="text-base sm:text-lg font-bold text-[#202124]">Comparativa de Volumen por Cliente</h2>
+                            <p className="text-[11px] sm:text-xs text-[#5f6368]">
+                                {periodLabel} • {clientStatsList.length} clientes encontrados
                             </p>
                         </div>
                     </div>
                     
                     <button
                         onClick={onClose}
-                        className="p-2 rounded-full text-[#5f6368] hover:text-[#202124] hover:bg-[#e8eaed] transition"
+                        className="p-2 rounded-full text-[#5f6368] hover:text-[#202124] hover:bg-[#e8eaed] transition min-h-[40px] min-w-[40px] flex items-center justify-center"
                         title="Cerrar"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -222,16 +260,17 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                 </div>
 
                 {/* Controls Bar */}
-                <div className="bg-white border-b border-[#dadce0] px-6 py-3 flex flex-wrap items-center justify-between gap-3 text-sm flex-shrink-0">
-                    <div className="flex flex-wrap items-center gap-3">
+                <div className="bg-white border-b border-[#dadce0] px-4 py-3 sm:px-6 flex flex-wrap items-center justify-between gap-2.5 text-xs sm:text-sm flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         {/* Month / Year Selectors */}
-                        <div className="flex items-center gap-2 bg-[#f8fafd] px-3.5 py-1.5 rounded-full border border-[#dadce0]">
-                            <span className="text-[11px] font-bold text-[#5f6368] uppercase">Periodo:</span>
+                        <div className="flex items-center gap-1.5 bg-[#f8fafd] px-3 py-1.5 rounded-full border border-[#dadce0]">
+                            <span className="text-[10px] sm:text-[11px] font-bold text-[#5f6368] uppercase">Periodo:</span>
                             <select
                                 value={selectedMonth}
                                 onChange={(e) => setSelectedMonth(Number(e.target.value))}
                                 className="font-semibold text-xs text-[#202124] bg-transparent focus:outline-none cursor-pointer"
                             >
+                                <option value={-1}>Todos los meses</option>
                                 {monthNames.map((m, i) => (
                                     <option key={i} value={i}>{m}</option>
                                 ))}
@@ -241,25 +280,26 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                                 onChange={(e) => setSelectedYear(Number(e.target.value))}
                                 className="font-semibold text-xs text-[#202124] bg-transparent focus:outline-none cursor-pointer"
                             >
-                                {[selectedYear - 1, selectedYear, selectedYear + 1].map(y => (
+                                <option value={-1}>Todos los años</option>
+                                {availableYears.map(y => (
                                     <option key={y} value={y}>{y}</option>
                                 ))}
                             </select>
                         </div>
 
                         {/* Metric Selector Tabs */}
-                        <div className="inline-flex bg-[#f1f3f4] p-1 rounded-full border border-[#dadce0]">
+                        <div className="inline-flex bg-[#f1f3f4] p-0.5 sm:p-1 rounded-full border border-[#dadce0] overflow-x-auto max-w-full">
                             <button
                                 onClick={() => setMetric('amount')}
-                                className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+                                className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-all ${
                                     metric === 'amount' ? 'bg-white text-[#1a73e8] shadow-xs' : 'text-[#5f6368] hover:text-[#202124]'
                                 }`}
                             >
-                                Monto Total (Q)
+                                Monto (Q)
                             </button>
                             <button
                                 onClick={() => setMetric('count')}
-                                className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+                                className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-all ${
                                     metric === 'count' ? 'bg-white text-[#1a73e8] shadow-xs' : 'text-[#5f6368] hover:text-[#202124]'
                                 }`}
                             >
@@ -267,7 +307,7 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                             </button>
                             <button
                                 onClick={() => setMetric('paid')}
-                                className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+                                className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-all ${
                                     metric === 'paid' ? 'bg-white text-[#1e8e3e] shadow-xs' : 'text-[#5f6368] hover:text-[#202124]'
                                 }`}
                             >
@@ -275,7 +315,7 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                             </button>
                             <button
                                 onClick={() => setMetric('pending')}
-                                className={`px-3 py-1 text-xs font-semibold rounded-full transition-all ${
+                                className={`px-2.5 sm:px-3 py-1 text-xs font-semibold rounded-full whitespace-nowrap transition-all ${
                                     metric === 'pending' ? 'bg-white text-[#d93025] shadow-xs' : 'text-[#5f6368] hover:text-[#202124]'
                                 }`}
                             >
@@ -314,10 +354,10 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                 </div>
 
                 {/* Secondary Filters (Search, Office, Sort, Limit) */}
-                <div className="bg-[#f8fafd] border-b border-[#dadce0] px-6 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs flex-shrink-0">
-                    <div className="flex flex-wrap items-center gap-3">
+                <div className="bg-[#f8fafd] border-b border-[#dadce0] px-4 py-2 sm:px-6 flex flex-wrap items-center justify-between gap-2.5 text-xs flex-shrink-0">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full sm:w-auto">
                         {/* Search Input */}
-                        <div className="relative w-48 sm:w-64">
+                        <div className="relative flex-1 sm:w-56 min-w-[160px]">
                             <input
                                 type="text"
                                 placeholder="Buscar cliente..."
@@ -334,7 +374,7 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                         <select
                             value={selectedOffice}
                             onChange={(e) => setSelectedOffice(e.target.value)}
-                            className="px-3 py-1.5 border border-[#dadce0] rounded-full bg-white text-[#3c4043] focus:outline-none focus:ring-1 focus:ring-[#1a73e8]"
+                            className="px-3 py-1.5 border border-[#dadce0] rounded-full bg-white text-[#3c4043] focus:outline-none focus:ring-1 focus:ring-[#1a73e8] text-xs"
                         >
                             <option value="all">Todas las oficinas</option>
                             {Object.values(Oficina).map(o => (
@@ -346,21 +386,21 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value as SortOption)}
-                            className="px-3 py-1.5 border border-[#dadce0] rounded-full bg-white text-[#3c4043] focus:outline-none focus:ring-1 focus:ring-[#1a73e8]"
+                            className="px-3 py-1.5 border border-[#dadce0] rounded-full bg-white text-[#3c4043] focus:outline-none focus:ring-1 focus:ring-[#1a73e8] text-xs"
                         >
-                            <option value="desc">Mayor a menor volumen</option>
-                            <option value="asc">Menor a mayor volumen</option>
+                            <option value="desc">Mayor a menor</option>
+                            <option value="asc">Menor a mayor</option>
                             <option value="alpha">Alfabético (A - Z)</option>
                         </select>
 
                         {/* Limit top */}
-                        <div className="flex items-center gap-1 text-[#5f6368]">
-                            <span>Mostrar:</span>
+                        <div className="hidden sm:flex items-center gap-1 text-[#5f6368]">
+                            <span>Ver:</span>
                             {[5, 10, 'all'].map(lim => (
                                 <button
                                     key={lim}
                                     onClick={() => setTopLimit(lim as number | 'all')}
-                                    className={`px-2.5 py-0.5 rounded-full font-medium ${
+                                    className={`px-2 py-0.5 rounded-full font-medium ${
                                         topLimit === lim ? 'bg-[#1a73e8] text-white' : 'hover:bg-[#e8eaed] text-[#3c4043]'
                                     }`}
                                 >
@@ -370,46 +410,46 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                         </div>
                     </div>
 
-                    <div className="text-[#5f6368] font-medium">
+                    <div className="text-[#5f6368] font-medium text-xs">
                         {filteredClients.length} {filteredClients.length === 1 ? 'cliente' : 'clientes'}
                     </div>
                 </div>
 
-                {/* KPI Overview Cards for the Month */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-6 py-3 bg-[#f8fafd] border-b border-[#dadce0] flex-shrink-0">
-                    <div className="bg-white p-3.5 rounded-2xl border border-[#dadce0] shadow-xs">
-                        <p className="text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Total del Mes</p>
-                        <p className="text-base font-bold text-[#202124] mt-0.5 font-mono">{formatCurrency(totalMonthAmount)}</p>
+                {/* KPI Overview Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 px-4 py-2.5 sm:px-6 sm:py-3 bg-[#f8fafd] border-b border-[#dadce0] flex-shrink-0">
+                    <div className="bg-white p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-[#dadce0] shadow-xs">
+                        <p className="text-[10px] sm:text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Total Periodo</p>
+                        <p className="text-sm sm:text-base font-bold text-[#202124] mt-0.5 font-mono">{formatCurrency(totalMonthAmount)}</p>
                     </div>
-                    <div className="bg-white p-3.5 rounded-2xl border border-[#dadce0] shadow-xs">
-                        <p className="text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Pagos Realizados</p>
-                        <p className="text-base font-bold text-[#1e8e3e] mt-0.5">{totalMonthCount} registros</p>
+                    <div className="bg-white p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-[#dadce0] shadow-xs">
+                        <p className="text-[10px] sm:text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Registros</p>
+                        <p className="text-sm sm:text-base font-bold text-[#1e8e3e] mt-0.5">{totalMonthCount} pagos</p>
                     </div>
-                    <div className="bg-white p-3.5 rounded-2xl border border-[#dadce0] shadow-xs">
-                        <p className="text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Clientes Activos</p>
-                        <p className="text-base font-bold text-[#1a73e8] mt-0.5">{clientStatsList.length} clientes</p>
+                    <div className="bg-white p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-[#dadce0] shadow-xs">
+                        <p className="text-[10px] sm:text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Clientes Activos</p>
+                        <p className="text-sm sm:text-base font-bold text-[#1a73e8] mt-0.5">{clientStatsList.length}</p>
                     </div>
-                    <div className="bg-white p-3.5 rounded-2xl border border-[#dadce0] shadow-xs">
-                        <p className="text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Promedio por Cliente</p>
-                        <p className="text-base font-bold text-[#f9ab00] mt-0.5 font-mono">
+                    <div className="bg-white p-2.5 sm:p-3.5 rounded-xl sm:rounded-2xl border border-[#dadce0] shadow-xs">
+                        <p className="text-[10px] sm:text-[11px] text-[#5f6368] uppercase font-bold tracking-wider">Promedio / Cliente</p>
+                        <p className="text-sm sm:text-base font-bold text-[#f9ab00] mt-0.5 font-mono">
                             {formatCurrency(clientStatsList.length > 0 ? totalMonthAmount / clientStatsList.length : 0)}
                         </p>
                     </div>
                 </div>
 
                 {/* Main Content Area: Chart or Table */}
-                <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
                     {filteredClients.length === 0 ? (
                         <div className="py-16 text-center text-gray-400">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
-                            <p className="text-base font-medium text-gray-600">No se encontraron pagos en este periodo con los filtros seleccionados.</p>
-                            <p className="text-xs text-gray-400 mt-1">Prueba seleccionando otro mes o modificando los términos de búsqueda.</p>
+                            <p className="text-base font-medium text-gray-600">No se encontraron pagos con los filtros seleccionados.</p>
+                            <p className="text-xs text-gray-400 mt-1">Prueba seleccionando "Todos los meses" o modificando la búsqueda.</p>
                         </div>
                     ) : viewMode === 'chart' ? (
                         /* Horizontal Bar Chart Visualizer */
-                        <div className="space-y-4">
+                        <div className="space-y-3 sm:space-y-4">
                             {filteredClients.map((client, index) => {
                                 const currentValue = metric === 'amount' ? client.totalAmount :
                                                      metric === 'count' ? client.paymentCount :
@@ -418,7 +458,6 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                                 const percentOfMax = maxMetricValue > 0 ? (currentValue / maxMetricValue) * 100 : 0;
                                 const isSelected = selectedClientForDetail === client.cliente;
 
-                                // Colors based on metric
                                 const barColor = metric === 'paid' ? 'bg-green-500' :
                                                  metric === 'pending' ? 'bg-red-500' :
                                                  metric === 'count' ? 'bg-teal-500' : 'bg-gradient-to-r from-blue-500 to-indigo-600';
@@ -427,44 +466,44 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                                     <div 
                                         key={client.cliente}
                                         onClick={() => setSelectedClientForDetail(isSelected ? null : client.cliente)}
-                                        className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
+                                        className={`p-3 sm:p-3.5 rounded-xl border transition-all cursor-pointer ${
                                             isSelected 
                                                 ? 'bg-blue-50/80 border-blue-400 shadow-md ring-2 ring-blue-200' 
                                                 : 'bg-white border-gray-200 hover:border-gray-300 hover:shadow-sm'
                                         }`}
                                     >
-                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-                                            <div className="flex items-center space-x-2.5">
-                                                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-slate-100 text-slate-700 font-bold text-xs flex items-center justify-center">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 mb-2">
+                                            <div className="flex items-center space-x-2">
+                                                <span className="flex-shrink-0 w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-slate-100 text-slate-700 font-bold text-[10px] sm:text-xs flex items-center justify-center">
                                                     {index + 1}
                                                 </span>
-                                                <span className="font-semibold text-gray-900 text-sm">
+                                                <span className="font-semibold text-gray-900 text-xs sm:text-sm truncate max-w-[200px] sm:max-w-none">
                                                     {client.cliente}
                                                 </span>
-                                                <div className="flex items-center gap-1">
+                                                <div className="flex items-center gap-1 flex-wrap">
                                                     {Array.from(client.offices).map(o => (
-                                                        <span key={o} className="px-1.5 py-0.5 text-[10px] font-semibold bg-gray-100 text-gray-600 rounded">
+                                                        <span key={o} className="px-1.5 py-0.2 bg-gray-100 text-gray-600 rounded text-[9px] sm:text-[10px] font-semibold">
                                                             {o}
                                                         </span>
                                                     ))}
                                                 </div>
                                             </div>
 
-                                            {/* Values on the right */}
-                                            <div className="flex items-center space-x-3 text-right">
-                                                <div className="text-right">
-                                                    <span className="font-mono font-bold text-sm text-gray-900 block">
+                                            {/* Values */}
+                                            <div className="flex items-center justify-between sm:justify-end space-x-3 text-right">
+                                                <div className="text-left sm:text-right">
+                                                    <span className="font-mono font-bold text-xs sm:text-sm text-gray-900 block">
                                                         {metric === 'count' 
                                                             ? `${client.paymentCount} ${client.paymentCount === 1 ? 'pago' : 'pagos'}` 
                                                             : formatCurrency(currentValue)}
                                                     </span>
-                                                    <span className="text-[11px] text-gray-500 block">
-                                                        {client.percentOfTotal.toFixed(1)}% del mes • {client.paymentCount} {client.paymentCount === 1 ? 'servicio' : 'servicios'}
+                                                    <span className="text-[10px] sm:text-[11px] text-gray-500 block">
+                                                        {client.percentOfTotal.toFixed(1)}% del periodo • {client.paymentCount} {client.paymentCount === 1 ? 'cita' : 'citas'}
                                                     </span>
                                                 </div>
                                                 <button
                                                     type="button"
-                                                    className={`p-1 rounded-full ${isSelected ? 'text-blue-600 rotate-180' : 'text-gray-400'} transition-transform`}
+                                                    className={`p-1 rounded-full ${isSelected ? 'text-blue-600 rotate-180' : 'text-gray-400'} transition-transform min-h-[32px] min-w-[32px] flex items-center justify-center`}
                                                     title={isSelected ? 'Ocultar desglose' : 'Ver desglose'}
                                                 >
                                                     <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -474,55 +513,54 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                                             </div>
                                         </div>
 
-                                        {/* Progressive Progress Bar */}
-                                        <div className="w-full bg-gray-100 h-3.5 rounded-full overflow-hidden flex relative">
+                                        {/* Progress Bar */}
+                                        <div className="w-full bg-gray-100 h-3 sm:h-3.5 rounded-full overflow-hidden flex relative">
                                             {metric === 'amount' ? (
-                                                /* Multi-color segment: Paid vs Pending */
                                                 <>
                                                     <div 
                                                         style={{ width: `${(client.paidAmount / maxMetricValue) * 100}%` }}
-                                                        className="bg-green-500 h-full transition-all duration-500"
+                                                        className="bg-green-500 h-full transition-all duration-300"
                                                         title={`Pagado: ${formatCurrency(client.paidAmount)}`}
                                                     />
                                                     <div 
                                                         style={{ width: `${(client.pendingAmount / maxMetricValue) * 100}%` }}
-                                                        className="bg-red-400 h-full transition-all duration-500"
+                                                        className="bg-red-400 h-full transition-all duration-300"
                                                         title={`Pendiente: ${formatCurrency(client.pendingAmount)}`}
                                                     />
                                                 </>
                                             ) : (
                                                 <div
                                                     style={{ width: `${percentOfMax}%` }}
-                                                    className={`${barColor} h-full transition-all duration-500 rounded-full`}
+                                                    className={`${barColor} h-full transition-all duration-300 rounded-full`}
                                                 />
                                             )}
                                         </div>
 
                                         {/* Sub-bar Labels */}
-                                        <div className="flex justify-between items-center text-[11px] text-gray-500 mt-1 px-0.5">
-                                            <span className="flex items-center gap-2">
+                                        <div className="flex justify-between items-center text-[10px] sm:text-[11px] text-gray-500 mt-1 px-0.5">
+                                            <span className="flex items-center gap-2 flex-wrap">
                                                 <span className="inline-flex items-center text-green-700">
                                                     <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block mr-1"></span>
-                                                    Pagado: {formatCurrency(client.paidAmount)} ({client.paidCount})
+                                                    Pagado: {formatCurrency(client.paidAmount)}
                                                 </span>
                                                 {client.pendingAmount > 0 && (
                                                     <span className="inline-flex items-center text-red-700">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-red-400 inline-block mr-1"></span>
-                                                        Pendiente: {formatCurrency(client.pendingAmount)} ({client.pendingCount})
+                                                        Pendiente: {formatCurrency(client.pendingAmount)}
                                                     </span>
                                                 )}
                                             </span>
-                                            <span>Promedio: {formatCurrency(client.averagePerPayment)}</span>
+                                            <span className="hidden sm:inline">Promedio: {formatCurrency(client.averagePerPayment)}</span>
                                         </div>
 
                                         {/* Expanded details if selected */}
                                         {isSelected && (
-                                            <div className="mt-3 pt-3 border-t border-blue-200 bg-white/70 p-3 rounded-lg text-xs space-y-2">
+                                            <div className="mt-3 pt-3 border-t border-blue-200 bg-white/70 p-2.5 sm:p-3 rounded-lg text-xs space-y-2">
                                                 <p className="font-semibold text-gray-800 flex items-center justify-between">
-                                                    <span>Historial detallado de {client.cliente} ({selectedClientPayments.length} registros en {monthNames[selectedMonth]} {selectedYear})</span>
+                                                    <span>Detalle de citas ({selectedClientPayments.length} registros)</span>
                                                 </p>
                                                 <div className="overflow-x-auto">
-                                                    <table className="w-full text-left">
+                                                    <table className="w-full text-left text-xs">
                                                         <thead>
                                                             <tr className="text-gray-500 border-b border-gray-200">
                                                                 <th className="py-1">Fecha</th>
@@ -561,58 +599,58 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                         </div>
                     ) : (
                         /* Table Mode */
-                        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-xs">
-                            <table className="w-full text-left text-xs">
+                        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto shadow-xs">
+                            <table className="w-full text-left text-xs min-w-[550px]">
                                 <thead className="bg-slate-50 text-gray-600 font-semibold border-b border-gray-200">
                                     <tr>
-                                        <th className="py-3 px-4">#</th>
-                                        <th className="py-3 px-4">Cliente</th>
-                                        <th className="py-3 px-4 text-center">Oficinas</th>
-                                        <th className="py-3 px-4 text-center">N° Pagos</th>
-                                        <th className="py-3 px-4 text-right">Pagado</th>
-                                        <th className="py-3 px-4 text-right">Pendiente</th>
-                                        <th className="py-3 px-4 text-right">Total (Q)</th>
-                                        <th className="py-3 px-4 text-right">% Mes</th>
+                                        <th className="py-2.5 px-3 sm:px-4">#</th>
+                                        <th className="py-2.5 px-3 sm:px-4">Cliente</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-center">Oficinas</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-center">Citas</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-right">Pagado</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-right">Pendiente</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-right">Total (Q)</th>
+                                        <th className="py-2.5 px-3 sm:px-4 text-right">% Periodo</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
                                     {filteredClients.map((client, idx) => (
                                         <tr key={client.cliente} className="hover:bg-slate-50 transition-colors">
-                                            <td className="py-3 px-4 text-gray-400 font-medium">{idx + 1}</td>
-                                            <td className="py-3 px-4 font-semibold text-gray-900">{client.cliente}</td>
-                                            <td className="py-3 px-4 text-center">
+                                            <td className="py-2.5 px-3 sm:px-4 text-gray-400 font-medium">{idx + 1}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 font-semibold text-gray-900">{client.cliente}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-center">
                                                 <div className="flex justify-center gap-1">
                                                     {Array.from(client.offices).map(o => (
-                                                        <span key={o} className="px-1.5 py-0.5 bg-gray-100 rounded text-[10px] text-gray-700 font-medium">
+                                                        <span key={o} className="px-1.5 py-0.2 bg-gray-100 rounded text-[10px] text-gray-700 font-medium">
                                                             {o}
                                                         </span>
                                                     ))}
                                                 </div>
                                             </td>
-                                            <td className="py-3 px-4 text-center font-bold text-gray-700">{client.paymentCount}</td>
-                                            <td className="py-3 px-4 text-right font-mono text-green-700">{formatCurrency(client.paidAmount)}</td>
-                                            <td className="py-3 px-4 text-right font-mono text-red-600">{formatCurrency(client.pendingAmount)}</td>
-                                            <td className="py-3 px-4 text-right font-mono font-bold text-gray-900">{formatCurrency(client.totalAmount)}</td>
-                                            <td className="py-3 px-4 text-right font-semibold text-blue-600">{client.percentOfTotal.toFixed(1)}%</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-center font-bold text-gray-700">{client.paymentCount}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-right font-mono text-green-700">{formatCurrency(client.paidAmount)}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-right font-mono text-red-600">{formatCurrency(client.pendingAmount)}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-right font-mono font-bold text-gray-900">{formatCurrency(client.totalAmount)}</td>
+                                            <td className="py-2.5 px-3 sm:px-4 text-right font-semibold text-blue-600">{client.percentOfTotal.toFixed(1)}%</td>
                                         </tr>
                                     ))}
                                 </tbody>
                                 <tfoot className="bg-slate-100 font-bold text-gray-900 border-t border-gray-200">
                                     <tr>
-                                        <td className="py-3 px-4" colSpan={3}>TOTAL ({filteredClients.length} clientes)</td>
-                                        <td className="py-3 px-4 text-center">
+                                        <td className="py-2.5 px-3 sm:px-4" colSpan={3}>TOTAL ({filteredClients.length} clientes)</td>
+                                        <td className="py-2.5 px-3 sm:px-4 text-center">
                                             {filteredClients.reduce((sum, c) => sum + c.paymentCount, 0)}
                                         </td>
-                                        <td className="py-3 px-4 text-right font-mono text-green-700">
+                                        <td className="py-2.5 px-3 sm:px-4 text-right font-mono text-green-700">
                                             {formatCurrency(filteredClients.reduce((sum, c) => sum + c.paidAmount, 0))}
                                         </td>
-                                        <td className="py-3 px-4 text-right font-mono text-red-600">
+                                        <td className="py-2.5 px-3 sm:px-4 text-right font-mono text-red-600">
                                             {formatCurrency(filteredClients.reduce((sum, c) => sum + c.pendingAmount, 0))}
                                         </td>
-                                        <td className="py-3 px-4 text-right font-mono">
+                                        <td className="py-2.5 px-3 sm:px-4 text-right font-mono">
                                             {formatCurrency(filteredClients.reduce((sum, c) => sum + c.totalAmount, 0))}
                                         </td>
-                                        <td className="py-3 px-4 text-right text-blue-600">100%</td>
+                                        <td className="py-2.5 px-3 sm:px-4 text-right text-blue-600">100%</td>
                                     </tr>
                                 </tfoot>
                             </table>
@@ -621,13 +659,13 @@ const ClientVolumeModal: React.FC<ClientVolumeModalProps> = ({
                 </div>
 
                 {/* Footer */}
-                <div className="bg-[#f8fafd] border-t border-[#dadce0] px-6 py-3.5 flex items-center justify-between flex-shrink-0 text-xs">
-                    <span className="text-[#5f6368]">
-                        {monthNames[selectedMonth]} {selectedYear} • <strong className="text-[#202124]">{totalMonthCount} transacciones procesadas</strong>
+                <div className="bg-[#f8fafd] border-t border-[#dadce0] px-4 py-3 sm:px-6 sm:py-3.5 flex items-center justify-between flex-shrink-0 text-xs">
+                    <span className="text-[#5f6368] truncate pr-2">
+                        {periodLabel} • <strong className="text-[#202124]">{totalMonthCount} citas analizadas</strong>
                     </span>
                     <button
                         onClick={onClose}
-                        className="px-6 py-2 bg-white border border-[#dadce0] text-[#3c4043] font-semibold rounded-full hover:bg-[#f1f3f4] transition"
+                        className="px-5 sm:px-6 py-1.5 sm:py-2 bg-white border border-[#dadce0] text-[#3c4043] font-semibold rounded-full hover:bg-[#f1f3f4] transition"
                     >
                         Cerrar
                     </button>

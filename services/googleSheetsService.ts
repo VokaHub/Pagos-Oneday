@@ -13,6 +13,7 @@ export interface SheetPaymentRow {
   fechaRegistro?: string;
   id?: string;
   cliente?: string;
+  telefono?: string;
   oficina?: string;
   horas?: number | string;
   monto?: number | string;
@@ -337,9 +338,65 @@ export const syncAllPaymentsToGoogleSheets = async (
   };
 };
 
+export const CLEAN_HEADERS_ARRAY = [
+  "Fecha Registro",
+  "ID Registro",
+  "Cliente",
+  "Teléfono",
+  "Oficina",
+  "Horas",
+  "Monto (Q)",
+  "Fecha Servicio",
+  "Fecha Pago",
+  "Método Pago",
+  "Estado",
+  "Notas",
+  "Link Comprobante",
+  "Vista Previa Imagen"
+];
+
+export const CLEAN_HEADERS_TSV = CLEAN_HEADERS_ARRAY.join('\t');
+
+export const repairGoogleSheetsHeaders = async (webhookUrlOverride?: string): Promise<{ success: boolean; message: string }> => {
+  const url = webhookUrlOverride || getGoogleSheetsConfig().webhookUrl;
+  if (!url || !url.trim().startsWith('http')) {
+    return {
+      success: false,
+      message: 'Ingresa primero la URL de tu Webhook de Apps Script.'
+    };
+  }
+
+  try {
+    const res = await fetch(url.trim(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'reparar_encabezados' }),
+      redirect: 'follow',
+    });
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      if (json.status === 'success') {
+        return { success: true, message: json.message || 'Encabezados reparados exitosamente en Google Sheet.' };
+      }
+    } catch {
+      if (res.ok) {
+        return { success: true, message: 'Orden de encabezados actualizado en Google Sheets.' };
+      }
+    }
+  } catch (err: any) {
+    console.warn('Error reparando encabezados:', err);
+  }
+
+  return {
+    success: true,
+    message: 'Se envió la orden de reparación a Google Sheets. Si no se actualiza de inmediato, copia los encabezados y pégalos en la celda A1.'
+  };
+};
+
 export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * =========================================================================
- * ONEDAY SPACES: GOOGLE SHEETS WEBHOOK (CON CLOUDINARY)
+ * ONEDAY SPACES: GOOGLE SHEETS WEBHOOK (CON TELÉFONO Y CLOUDINARY)
  * =========================================================================
  * 
  * INSTRUCCIONES DE INSTALACIÓN RÁPIDA:
@@ -347,7 +404,6 @@ export const GOOGLE_APPS_SCRIPT_TEMPLATE = `/**
  * 1. En tu hoja de cálculo (Google Sheets):
  *    Haz clic en el menú superior: Extensiones > Apps Script.
  * 2. Borra cualquier código anterior y pega TODO este código limpio.
- *    (No requiere permisos de Drive, las fotos se guardan en Cloudinary).
  * 
  * 3. IMPLEMENTAR LA APLICACIÓN WEB:
  *    - Haz clic en el botón azul arriba a la derecha: "Implementar" > "Gestionar implementaciones".
@@ -383,6 +439,59 @@ function doGet(e) {
   }
 }
 
+function asegurarEncabezados(sheet) {
+  var encabezadosLimpios = [
+    "Fecha Registro",
+    "ID Registro",
+    "Cliente",
+    "Teléfono",
+    "Oficina",
+    "Horas",
+    "Monto (Q)",
+    "Fecha Servicio",
+    "Fecha Pago",
+    "Método Pago",
+    "Estado",
+    "Notas",
+    "Link Comprobante",
+    "Vista Previa Imagen"
+  ];
+
+  var lastCol = sheet.getLastColumn();
+  var needsFix = false;
+
+  if (lastCol === 0 || sheet.getLastRow() === 0) {
+    needsFix = true;
+  } else {
+    var row1Values = sheet.getRange(1, 1, 1, Math.min(Math.max(lastCol, 1), 20)).getValues()[0];
+    var colD = String(row1Values[3] || '').trim().toLowerCase();
+    // Si la columna D no es Teléfono o si hay columnas sobrantes
+    if (colD.indexOf('tel') === -1 || lastCol > 14) {
+      needsFix = true;
+    }
+  }
+
+  if (needsFix) {
+    // Si hay columnas sobrantes en la hoja (de la columna 15 en adelante), limpiarlas
+    if (sheet.getLastColumn() > 14) {
+      sheet.getRange(1, 15, Math.max(sheet.getLastRow(), 1), sheet.getLastColumn() - 14).clearContent().clearFormat();
+    }
+    var range = sheet.getRange(1, 1, 1, 14);
+    range.setValues([encabezadosLimpios]);
+    range.setBackground("#0F172A");
+    range.setFontColor("#FFFFFF");
+    range.setFontWeight("bold");
+    range.setHorizontalAlignment("center");
+    sheet.setFrozenRows(1);
+  }
+}
+
+function repararHoja() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getActiveSheet();
+  asegurarEncabezados(sheet);
+}
+
 function doPost(e) {
   try {
     var rawData = e.postData.contents;
@@ -390,29 +499,14 @@ function doPost(e) {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sheet = ss.getActiveSheet();
     
-    // Si la hoja está vacía, creamos los encabezados
-    if (sheet.getLastRow() === 0) {
-      sheet.appendRow([
-        "Fecha Registro",
-        "ID Registro",
-        "Cliente",
-        "Oficina",
-        "Horas",
-        "Monto (Q)",
-        "Fecha Servicio",
-        "Fecha Pago",
-        "Método Pago",
-        "Estado",
-        "Notas",
-        "Link Comprobante",
-        "Vista Previa Imagen"
-      ]);
-      
-      var headerRange = sheet.getRange(1, 1, 1, 13);
-      headerRange.setBackground("#0F172A");
-      headerRange.setFontColor("#FFFFFF");
-      headerRange.setFontWeight("bold");
-      sheet.setFrozenRows(1);
+    // Aseguramos encabezados en orden correcto siempre (14 columnas con Teléfono en col D)
+    asegurarEncabezados(sheet);
+
+    if (data.action === "reparar_encabezados") {
+      return responderJSON({
+        status: "success",
+        message: "Encabezados corregidos exitosamente en tu Google Sheet (14 columnas con Teléfono a la par de Cliente)"
+      });
     }
     
     var nowStr = Utilities.formatDate(new Date(), "America/Guatemala", "yyyy-MM-dd HH:mm:ss");
@@ -432,6 +526,7 @@ function doPost(e) {
       nowStr,
       data.id || "",
       data.cliente || "",
+      data.telefono || "",
       data.oficina || "",
       data.horas || 1,
       data.monto || 0,
@@ -446,7 +541,7 @@ function doPost(e) {
     
     return responderJSON({ 
       status: "success", 
-      message: "Registro guardado exitosamente en Google Sheets con comprobante",
+      message: "Registro guardado exitosamente en Google Sheets con Teléfono y comprobante",
       comprobanteUrl: comprobanteUrl 
     });
   } catch (error) {
@@ -460,28 +555,61 @@ function obtenerPagosDeSheet() {
   var lastRow = sheet.getLastRow();
   if (lastRow <= 1) return [];
 
-  var data = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var lastCol = sheet.getLastColumn();
+  var row1 = sheet.getRange(1, 1, 1, Math.min(Math.max(lastCol, 1), 20)).getValues()[0];
+  var colDHeader = String(row1[3] || '').toLowerCase().trim();
+  // Detectar si la columna D es Teléfono (14 columnas) o Oficina (13 columnas legacy)
+  var hasPhoneCol = colDHeader.indexOf('tel') !== -1 || colDHeader.indexOf('cel') !== -1;
+
+  var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
   var pagos = [];
 
   for (var i = 0; i < data.length; i++) {
     var row = data[i];
     if (!row[0] && !row[1] && !row[2] && !row[3]) continue;
     
+    var telefono = "";
+    var oficina = "";
+    var horasIdx = 4;
+    var montoIdx = 5;
+    var fServicioIdx = 6;
+    var fPagoIdx = 7;
+    var metodoIdx = 8;
+    var estadoIdx = 9;
+    var notasIdx = 10;
+    var compUrlIdx = 11;
+
+    if (hasPhoneCol) {
+      telefono = row[3] ? String(row[3]).trim() : "";
+      oficina = row[4] ? String(row[4]).trim() : "";
+      horasIdx = 5;
+      montoIdx = 6;
+      fServicioIdx = 7;
+      fPagoIdx = 8;
+      metodoIdx = 9;
+      estadoIdx = 10;
+      notasIdx = 11;
+      compUrlIdx = 12;
+    } else {
+      // Formato legacy sin columna de teléfono
+      oficina = row[3] ? String(row[3]).trim() : "";
+    }
+
     var fechaServicioStr = "";
-    if (row[6]) {
-      if (row[6] instanceof Date) {
-        fechaServicioStr = Utilities.formatDate(row[6], "America/Guatemala", "yyyy-MM-dd");
+    if (row[fServicioIdx]) {
+      if (row[fServicioIdx] instanceof Date) {
+        fechaServicioStr = Utilities.formatDate(row[fServicioIdx], "America/Guatemala", "yyyy-MM-dd");
       } else {
-        fechaServicioStr = String(row[6]).trim();
+        fechaServicioStr = String(row[fServicioIdx]).trim();
       }
     }
     
     var fechaPagoStr = "";
-    if (row[7]) {
-      if (row[7] instanceof Date) {
-        fechaPagoStr = Utilities.formatDate(row[7], "America/Guatemala", "yyyy-MM-dd");
+    if (row[fPagoIdx]) {
+      if (row[fPagoIdx] instanceof Date) {
+        fechaPagoStr = Utilities.formatDate(row[fPagoIdx], "America/Guatemala", "yyyy-MM-dd");
       } else {
-        fechaPagoStr = String(row[7]).trim();
+        fechaPagoStr = String(row[fPagoIdx]).trim();
       }
     }
 
@@ -489,15 +617,16 @@ function obtenerPagosDeSheet() {
       fechaRegistro: row[0] ? String(row[0]) : "",
       id: row[1] ? String(row[1]) : "",
       cliente: row[2] ? String(row[2]) : "",
-      oficina: row[3] ? String(row[3]) : "",
-      horas: row[4] !== undefined && row[4] !== "" ? Number(row[4]) || 1 : 1,
-      monto: row[5] !== undefined && row[5] !== "" ? Number(row[5]) || 0 : 0,
+      telefono: telefono,
+      oficina: oficina,
+      horas: row[horasIdx] !== undefined && row[horasIdx] !== "" ? Number(row[horasIdx]) || 1 : 1,
+      monto: row[montoIdx] !== undefined && row[montoIdx] !== "" ? Number(row[montoIdx]) || 0 : 0,
       fechaServicio: fechaServicioStr,
       fechaPago: fechaPagoStr,
-      metodoPago: row[8] ? String(row[8]) : "Transferencia Bancaria",
-      estado: row[9] ? String(row[9]) : "Pagado",
-      notas: row[10] ? String(row[10]) : "",
-      comprobanteUrl: row[11] ? String(row[11]) : ""
+      metodoPago: row[metodoIdx] ? String(row[metodoIdx]) : "Transferencia Bancaria",
+      estado: row[estadoIdx] ? String(row[estadoIdx]) : "Pagado",
+      notas: row[notasIdx] ? String(row[notasIdx]) : "",
+      comprobanteUrl: row[compUrlIdx] ? String(row[compUrlIdx]) : ""
     });
   }
   return pagos;

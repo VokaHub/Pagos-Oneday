@@ -130,7 +130,7 @@ const PaymentRequestModal: React.FC<PaymentRequestModalProps> = ({ isOpen, onClo
         }
         const bankInfo = bankAccountsData.map(b => `${b.account.bank} - Cta ${b.account.accountType}: ${b.account.accountNumber} (${b.account.accountName})`).join('\n');
         const servicesList = payments.map(p => `• Oficina ${p.oficina} (${formatDateForDisplay(p.fecha)}): ${formatCurrency(p.monto)}`).join('\n');
-        const text = `Hola ${clientData.clientName}, le saludamos de ONEDAY Spaces.\n\nLe compartimos el estado de cuenta por sus reservaciones pendientes:\n\n${servicesList}\n\n*Total a Pagar:* ${formatCurrency(clientData.totalDue)}\n\n*Cuentas para transferencia:*\n${bankInfo}\n\nPor favor nos envía el comprobante al realizar su pago. ¡Muchas gracias!`;
+        const text = `Hola ${clientData.clientName}, le saludamos de ONEDAY Spaces con respecto a tus agendas.\n\nLe compartimos el estado de cuenta por sus reservaciones pendientes:\n\n${servicesList}\n\n*Total a Pagar:* ${formatCurrency(clientData.totalDue)}\n\n*Cuentas para transferencia:*\n${bankInfo}\n\nPor favor nos envía el comprobante al realizar su pago. ¡Muchas gracias!`;
         window.open(`https://wa.me/${digits}?text=${encodeURIComponent(text)}`, '_blank');
     };
     

@@ -8,6 +8,7 @@ interface ActionFooterProps {
     isSelectionMode: boolean;
     selectedCount: number;
     onDeleteSelected: () => void;
+    onMergeSelected?: () => void;
 }
 
 const ActionFooter: React.FC<ActionFooterProps> = ({
@@ -17,7 +18,8 @@ const ActionFooter: React.FC<ActionFooterProps> = ({
     hasPaidPayments,
     isSelectionMode,
     selectedCount,
-    onDeleteSelected
+    onDeleteSelected,
+    onMergeSelected
 }) => {
     return (
         <div className="bg-white/95 backdrop-blur-md p-5 rounded-2xl shadow-google-md mt-6 sticky bottom-4 z-30 border border-[#dadce0] transition-all">
@@ -57,6 +59,19 @@ const ActionFooter: React.FC<ActionFooterProps> = ({
                         </svg>
                         <span>{isSelectionMode ? `Generar Comprobante (${selectedCount})` : "Generar Comprobante"}</span>
                     </button>
+
+                    {isSelectionMode && selectedCount >= 2 && onMergeSelected && (
+                        <button 
+                            onClick={onMergeSelected} 
+                            className="px-5 py-3 bg-[#8e24aa] hover:bg-[#7b1fa2] text-white text-sm font-semibold rounded-full shadow-google-sm hover:shadow-google-md transition-all flex items-center gap-2 cursor-pointer"
+                            title="Fusionar los registros seleccionados y sumar sus horas y montos"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4.5 w-4.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                            </svg>
+                            <span>Fusionar ({selectedCount})</span>
+                        </button>
+                    )}
 
                     {isSelectionMode && (
                         <button 

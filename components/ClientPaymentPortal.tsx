@@ -1,7 +1,8 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { Oficina, EstadoPago, Payment, OFFICE_BANK_DETAILS, BankAccountInfo, DEFAULT_CLIENTS_LIST } from '../types';
 import { sendPaymentToGoogleSheets, ClientPaymentSubmission } from '../services/googleSheetsService';
 import { uploadReceiptToCloudinary } from '../services/cloudinaryService';
+import { fetchLiveClientDirectory, ClientDirectoryItem } from '../services/clientDirectoryService';
 
 interface ClientPaymentPortalProps {
   onPaymentSubmitted: (payment: Payment | Payment[]) => void;
@@ -54,6 +55,8 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 }) => {
   // Form State
   const [cliente, setCliente] = useState('');
+  const [telefono, setTelefono] = useState('');
+  const [phoneAutoDetected, setPhoneAutoDetected] = useState(false);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const clientInputContainerRef = useRef<HTMLDivElement>(null);
@@ -62,6 +65,21 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
   const [showAdminPinModal, setShowAdminPinModal] = useState(false);
   const [adminPinInput, setAdminPinInput] = useState('');
   const [adminPinError, setAdminPinError] = useState(false);
+
+  // Directorio de clientes en vivo desde Google Forms
+  const [directoryClients, setDirectoryClients] = useState<ClientDirectoryItem[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    fetchLiveClientDirectory().then((clients) => {
+      if (active && clients && clients.length > 0) {
+        setDirectoryClients(clients);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Form Fields in exact order:
   // 1. Nombre Completo o Empresa (con sugerencias de citas pendientes)
@@ -80,16 +98,24 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
   ]);
   const [comprobanteImg, setComprobanteImg] = useState<string | undefined>(undefined);
 
-  // Client suggestions from default list & real payments
+  // Client suggestions from default list, live Google Forms directory & real payments
   const allKnownClients = useMemo(() => {
     const list = new Set<string>(DEFAULT_CLIENTS_LIST.filter(n => n && n.trim().length > 2));
+    
+    // Agregar clientes del formulario de Google Forms
+    directoryClients.forEach(c => {
+      if (c.nombre && c.nombre.trim().length > 2) {
+        list.add(c.nombre.trim());
+      }
+    });
+
     allPayments.forEach(p => {
       if (p.cliente && p.cliente.trim().length > 2) {
         list.add(p.cliente.trim());
       }
     });
     return Array.from(list);
-  }, [allPayments]);
+  }, [allPayments, directoryClients]);
 
   // Filtered client suggestions
   const clientSuggestions = useMemo(() => {
@@ -125,6 +151,63 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     return matching[0];
   }, [cliente, allPayments]);
 
+  // Phone directory from allPayments, directoryClients (Google Forms) and localStorage
+  const clientPhoneMap = useMemo(() => {
+    const map = new Map<string, string>();
+    try {
+      const saved = localStorage.getItem('oneday_client_phone_directory');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        Object.entries(parsed).forEach(([k, v]) => {
+          if (v && typeof v === 'string' && v.trim()) {
+            map.set(normalizeText(k), v.trim());
+          }
+        });
+      }
+    } catch {}
+
+    // Cargar teléfonos del directorio de Google Forms
+    directoryClients.forEach(c => {
+      if (c.nombre && c.telefono && c.telefono.trim()) {
+        const norm = normalizeText(c.nombre);
+        map.set(norm, c.telefono.trim());
+      }
+    });
+
+    allPayments.forEach(p => {
+      if (p.cliente && p.telefono && p.telefono.trim()) {
+        const norm = normalizeText(p.cliente);
+        if (!map.has(norm)) {
+          map.set(norm, p.telefono.trim());
+        }
+      }
+    });
+    return map;
+  }, [allPayments, directoryClients]);
+
+  const selectClient = useCallback((name: string) => {
+    setCliente(name);
+    setShowClientSuggestions(false);
+    setHighlightedIndex(-1);
+
+    const knownPhone = clientPhoneMap.get(normalizeText(name));
+    if (knownPhone) {
+      setTelefono(knownPhone);
+      setPhoneAutoDetected(true);
+    }
+  }, [clientPhoneMap]);
+
+  // Auto-detect phone if user types matching client name and phone is empty or was auto-detected
+  useEffect(() => {
+    const trimmed = cliente.trim();
+    if (!trimmed) return;
+    const knownPhone = clientPhoneMap.get(normalizeText(trimmed));
+    if (knownPhone && (!telefono || phoneAutoDetected)) {
+      setTelefono(knownPhone);
+      setPhoneAutoDetected(true);
+    }
+  }, [cliente, clientPhoneMap, telefono, phoneAutoDetected]);
+
   // Apply suggested unpaid appointment to form
   const handleApplySuggestedAppointment = (apt: Payment) => {
     const validOffice = Object.values(Oficina).includes(apt.oficina as Oficina) 
@@ -139,6 +222,11 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
         fechaServicio: apt.fecha || toLocalDateString(new Date()),
       }
     ]);
+
+    if (apt.telefono && apt.telefono.trim()) {
+      setTelefono(apt.telefono.trim());
+      setPhoneAutoDetected(true);
+    }
   };
 
   // Click outside listener to dismiss suggestions dropdown
@@ -162,6 +250,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
   const [copiedBankKey, setCopiedBankKey] = useState<string | null>(null);
   const [submittedData, setSubmittedData] = useState<{
     cliente: string;
+    telefono?: string;
     total: number;
     rows: ServiceRow[];
     googleSheetsSuccess?: boolean;
@@ -340,6 +429,11 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       return;
     }
 
+    if (!telefono.trim()) {
+      alert('Por favor ingrese su número de teléfono o WhatsApp para validar y asociar su pago con exactitud.');
+      return;
+    }
+
     if (rows.length === 0) {
       alert('Por favor agregue al menos una fila de servicio.');
       return;
@@ -353,6 +447,16 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     }
 
     setIsSubmitting(true);
+
+    // Guardar número de teléfono en el directorio local para autocompletado futuro
+    if (cliente.trim() && telefono.trim()) {
+      try {
+        const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
+        const dir = JSON.parse(rawDir);
+        dir[cliente.trim()] = telefono.trim();
+        localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
+      } catch {}
+    }
 
     // 1. Subir comprobante a Cloudinary para obtener una URL pública HTTPS inmediata
     let hostedComprobanteUrl = '';
@@ -385,6 +489,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       const newPaymentData: Payment = {
         id: subId,
         cliente: cliente.trim(),
+        telefono: telefono.trim(),
         oficina: r.oficina,
         horas: r.horas,
         monto: rowMonto,
@@ -403,7 +508,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       const clientSubmission: ClientPaymentSubmission = {
         id: subId,
         cliente: cliente.trim(),
-        telefono: '',
+        telefono: telefono.trim(),
         email: '',
         oficina: r.oficina,
         horas: r.horas,
@@ -452,6 +557,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 
     setSubmittedData({
       cliente: cliente.trim(),
+      telefono: telefono.trim(),
       total: totalAmount,
       rows: [...rows],
       googleSheetsSuccess: allSucceeded,
@@ -464,6 +570,8 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 
   const handleReset = () => {
     setCliente('');
+    setTelefono('');
+    setPhoneAutoDetected(false);
     setRows([
       {
         id: `row-${Date.now()}-1`,
@@ -522,7 +630,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
               Comprobante Recibido
             </h2>
             <p className="text-sm text-slate-500 mb-4">
-              Gracias, <strong>{submittedData.cliente}</strong>. Tu reporte ha sido registrado exitosamente en el sistema.
+              Gracias, <strong>{submittedData.cliente}</strong>{submittedData.telefono ? ` (Tel. ${submittedData.telefono})` : ''}. Tu reporte ha sido registrado exitosamente en el sistema.
             </p>
 
             {/* Google Sheets Sync Indicator */}
@@ -585,6 +693,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                 href={`https://wa.me/?text=${encodeURIComponent(
                   `*Comprobante de Pago Reportado - ONEDAY Spaces*\n\n` +
                   `*Cliente:* ${submittedData.cliente}\n` +
+                  (submittedData.telefono ? `*Teléfono:* ${submittedData.telefono}\n` : '') +
                   `*Total:* ${formatCurrency(submittedData.total)}\n\n` +
                   `*Detalle de Oficinas:*\n` +
                   submittedData.rows
@@ -663,8 +772,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                         if (highlightedIndex >= 0 && highlightedIndex < clientSuggestions.length) {
                           e.preventDefault();
                           const selected = clientSuggestions[highlightedIndex];
-                          setCliente(selected);
-                          setShowClientSuggestions(false);
+                          selectClient(selected);
                         }
                       } else if (e.key === 'Escape') {
                         setShowClientSuggestions(false);
@@ -714,9 +822,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                           type="button"
                           onMouseDown={(e) => {
                             e.preventDefault();
-                            setCliente(name);
-                            setShowClientSuggestions(false);
-                            setHighlightedIndex(-1);
+                            selectClient(name);
                           }}
                           onMouseEnter={() => setHighlightedIndex(idx)}
                           className={`w-full text-left px-3.5 py-2.5 flex items-center justify-between text-xs transition ${
@@ -724,12 +830,19 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                           }`}
                         >
                           <div className="flex items-center gap-2.5">
-                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
                               isHighlighted ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'
                             }`}>
                               {initials}
                             </span>
-                            <span className="font-medium">{name}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-medium">{name}</span>
+                              {clientPhoneMap.get(normalizeText(name)) && (
+                                <span className={`text-[11px] font-normal ${isHighlighted ? 'text-blue-700' : 'text-slate-400'}`}>
+                                  • 📞 {clientPhoneMap.get(normalizeText(name))}
+                                </span>
+                              )}
+                            </div>
                           </div>
 
                           <span className={`text-[10px] ${isHighlighted ? 'text-blue-600 font-semibold' : 'text-slate-400'}`}>
@@ -767,10 +880,53 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                 )}
               </div>
 
-              {/* 2. Foto o Captura del Comprobante de Pago */}
+              {/* 2. Número de Teléfono / WhatsApp */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label htmlFor="telefono-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                    2. Número de Teléfono / WhatsApp <span className="text-red-500">*</span>
+                  </label>
+                  {phoneAutoDetected ? (
+                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                      <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                      </svg>
+                      Número detectado automáticamente
+                    </span>
+                  ) : (
+                    <span className="text-[11px] text-slate-400">
+                      8 dígitos (Guatemala)
+                    </span>
+                  )}
+                </div>
+
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                    <span className="text-xs font-bold text-slate-500 flex items-center gap-1">
+                      <span>🇬🇹 +502</span>
+                      <span className="text-slate-300">|</span>
+                    </span>
+                  </div>
+                  <input
+                    id="telefono-input"
+                    type="tel"
+                    value={telefono}
+                    onChange={(e) => {
+                      setTelefono(e.target.value);
+                      setPhoneAutoDetected(false);
+                    }}
+                    placeholder="Ej. 5555-1234"
+                    maxLength={15}
+                    required
+                    className="w-full pl-24 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-sm font-medium transition"
+                  />
+                </div>
+              </div>
+
+              {/* 3. Foto o Captura del Comprobante de Pago */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  2. Foto o Captura del Comprobante de Pago
+                  3. Foto o Captura del Comprobante de Pago
                 </label>
 
                 {comprobanteImg ? (
@@ -789,7 +945,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                           <span>Comprobante cargado correctamente</span>
                         </span>
                         <span className="text-[11px] text-emerald-700">
-                          Listo para enviar y conciliar
+                          Listo para enviar
                         </span>
                       </div>
                     </div>
@@ -823,11 +979,11 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                 )}
               </div>
 
-              {/* 3. Oficinas Utilizadas */}
+              {/* 4. Oficinas Utilizadas */}
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    3. Oficinas Utilizadas <span className="text-red-500">*</span>
+                    4. Oficinas Utilizadas <span className="text-red-500">*</span>
                   </label>
                   <span className="text-xs font-semibold text-slate-500">
                     Tarifa: <strong className="text-slate-800">Q65.00 / hora</strong>
@@ -922,66 +1078,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     </svg>
                     <span>Agregar otra fecha u oficina</span>
                   </button>
-                </div>
-              </div>
-
-              {/* 4. Cuentas para Transferencia Bancaria */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                  4. Cuentas para Transferencia Bancaria
-                </label>
-
-                <div className="space-y-2.5">
-                  {requiredBankAccounts.map(({ key, account, offices }) => (
-                    <div
-                      key={key}
-                      className="p-4 bg-slate-50 border border-slate-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="space-y-1 text-xs">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-slate-900">{account.banco}</span>
-                          <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-800 text-[10px] font-bold">
-                            {account.tipo}
-                          </span>
-                        </div>
-                        <div className="text-slate-600">
-                          Beneficiario: <strong>{account.nombre}</strong>
-                        </div>
-                        <div className="text-slate-900 font-mono font-bold tracking-wider text-sm flex items-center gap-2">
-                          <span>{account.cuenta}</span>
-                        </div>
-                        <div className="text-[10px] text-slate-500">
-                          Aplica para: Oficina{offices.length > 1 ? 's' : ''} {offices.join(', ')}
-                        </div>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleCopyBankAccount(key, account.cuenta)}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 shrink-0 ${
-                          copiedBankKey === key
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-white hover:bg-slate-100 text-slate-700 border border-slate-200'
-                        }`}
-                      >
-                        {copiedBankKey === key ? (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                            </svg>
-                            ¡Número Copiado!
-                          </>
-                        ) : (
-                          <>
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
-                            </svg>
-                            Copiar Cuenta
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  ))}
                 </div>
               </div>
 

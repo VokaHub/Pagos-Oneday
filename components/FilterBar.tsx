@@ -6,7 +6,6 @@ interface FilterBarProps {
     setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
     onAddPayment: () => void;
     onExportToExcel: () => void;
-    onShowDailyReport: () => void;
     onShowEstimates: () => void;
     onShowClientVolume?: () => void;
     hasFilteredResults: boolean;
@@ -53,7 +52,6 @@ const FilterBar: React.FC<FilterBarProps> = ({
     setFilters, 
     onAddPayment, 
     onExportToExcel, 
-    onShowDailyReport, 
     onShowEstimates, 
     onShowClientVolume,
     hasFilteredResults,
@@ -185,33 +183,45 @@ const FilterBar: React.FC<FilterBarProps> = ({
 
                 {/* Streamlined controls: Search, Office, Status Quick-Pills & Big Buttons */}
                 <div className="flex flex-wrap items-center gap-3">
-                    {/* Search by client */}
-                    <div className="relative min-w-[240px] flex-1 max-w-sm">
-                        <input
-                            type="text"
-                            name="searchTerm"
-                            id="searchTerm"
-                            value={filters.searchTerm}
-                            onChange={handleInputChange}
-                            placeholder="Buscar por cliente..."
-                            className="w-full pl-10 pr-8 py-2.5 text-sm bg-[#f8fafd] border border-[#dadce0] rounded-full focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent transition"
-                        />
-                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
-                            <svg className="h-4 w-4 text-[#5f6368]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                            </svg>
-                        </div>
-                        {filters.searchTerm && (
-                            <button
-                                onClick={() => handleInputChange({ target: { name: 'searchTerm', value: '' } } as any)}
-                                className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#5f6368] hover:text-[#202124]"
-                                title="Limpiar búsqueda"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    {/* Search by client or phone */}
+                    <div className="flex items-center gap-1.5 min-w-[260px] flex-1 max-w-md">
+                        <div className="relative flex-1">
+                            <input
+                                type="text"
+                                name="searchTerm"
+                                id="searchTerm"
+                                value={filters.searchTerm}
+                                onChange={handleInputChange}
+                                placeholder="Teléfono o cliente..."
+                                className="w-full pl-10 pr-8 py-2.5 text-sm bg-[#f8fafd] border border-[#dadce0] rounded-full focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent transition"
+                            />
+                            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                                <svg className="h-4 w-4 text-[#5f6368]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
-                            </button>
-                        )}
+                            </div>
+                            {filters.searchTerm && (
+                                <button
+                                    onClick={() => handleInputChange({ target: { name: 'searchTerm', value: '' } } as any)}
+                                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#5f6368] hover:text-[#202124]"
+                                    title="Limpiar búsqueda"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                </button>
+                            )}
+                        </div>
+                        <button 
+                            type="button"
+                            onClick={onRotateClient} 
+                            title="Ruleta: rotar clientes por número de teléfono" 
+                            className="p-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-full transition flex items-center justify-center border border-blue-200 shadow-xs cursor-pointer"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h5M20 20v-5h-5M4 4l16 16" transform="rotate(90 12 12)" />
+                            </svg>
+                        </button>
                     </div>
 
                     {/* Office Dropdown */}
@@ -415,7 +425,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                 {/* Search Input with Rotator */}
                 <div className="sm:col-span-2 lg:col-span-2">
                     <label htmlFor="searchTerm" className="block text-xs font-bold text-[#5f6368] uppercase tracking-wider mb-1.5">
-                        Buscar por Cliente
+                        Buscar por Teléfono o Cliente
                     </label>
                     <div className="flex items-center gap-2">
                         <div className="relative flex-1">
@@ -425,7 +435,7 @@ const FilterBar: React.FC<FilterBarProps> = ({
                                 id="searchTerm"
                                 value={filters.searchTerm}
                                 onChange={handleInputChange}
-                                placeholder="Nombre del cliente..."
+                                placeholder="Teléfono o cliente..."
                                 className="w-full pl-10 pr-8 py-2.5 text-sm bg-[#f8fafd] border border-[#dadce0] rounded-xl shadow-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent transition"
                             />
                             <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -446,12 +456,13 @@ const FilterBar: React.FC<FilterBarProps> = ({
                             )}
                         </div>
                         <button 
+                            type="button"
                             onClick={onRotateClient} 
-                            title="Rotar automáticamente entre clientes con registros" 
-                            className="p-2.5 bg-[#f1f3f4] text-[#3c4043] rounded-xl hover:bg-[#e8eaed] transition flex items-center justify-center border border-[#dadce0] shadow-xs"
+                            title="Ruleta: rotar clientes por número de teléfono" 
+                            className="p-2.5 bg-blue-50 text-blue-700 hover:bg-blue-100 rounded-xl transition flex items-center justify-center border border-blue-200 shadow-xs cursor-pointer group"
                         >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h5M20 20v-5h-5M4 4l16 16" transform="rotate(90 12 12)" />
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-700 group-hover:rotate-180 transition-transform duration-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M4 4v5h5M20 20v-5h-5M4 4l16 16" transform="rotate(90 12 12)" />
                             </svg>
                         </button>
                     </div>
@@ -661,15 +672,6 @@ const FilterBar: React.FC<FilterBarProps> = ({
                     </button>
                 )}
 
-                <button 
-                    onClick={onShowDailyReport} 
-                    className="px-4 py-2.5 bg-white text-[#5f6368] border border-[#dadce0] hover:bg-[#f8fafd] hover:text-[#202124] text-sm font-medium rounded-full shadow-xs transition flex items-center gap-2"
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[#5f6368]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    <span>Resumen Diario</span>
-                </button>
 
                 <button 
                     onClick={onShowEstimates} 

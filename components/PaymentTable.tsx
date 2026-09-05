@@ -63,7 +63,7 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
         if (digits.length === 8) {
             digits = `502${digits}`;
         }
-        const message = encodeURIComponent(`Hola ${p.cliente}, le saludamos de ONEDAY Spaces respecto a su reservación en la oficina ${p.oficina}.`);
+        const message = encodeURIComponent(`Hola ${p.cliente}, le saludamos de ONEDAY Spaces con respecto a tus agendas`);
         window.open(`https://wa.me/${digits}?text=${message}`, '_blank');
     };
 
@@ -116,10 +116,59 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
         }
     };
 
-    const handleDragStart = (e: React.DragEvent<HTMLTableRowElement>, payment: Payment) => {
+    const isMergeableWithTarget = (dragged: Payment | null, target: Payment) => {
+        if (!dragged || !target || dragged.id === target.id) return false;
+        
+        const cleanStr = (s?: string) => (s || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/g, '').trim();
+        
+        const normDate = (d?: string) => {
+            if (!d) return '';
+            const raw = String(d).trim().split('T')[0].split(' ')[0];
+            const parts = raw.split(/[\/\-]/);
+            if (parts.length === 3) {
+                if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+                if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+            }
+            return raw;
+        };
+
+        const normOffice = (o?: string) => {
+            if (!o) return '';
+            const t = String(o).toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (t.includes('1201')) return '1201';
+            if (t.includes('203B') || t.includes('203')) return '203B';
+            if (t.includes('211B') || t.includes('211')) return '211B';
+            if (t.includes('232B') || t.includes('232')) return '232B';
+            if (t.includes('323') || t.includes('VITALE') || t.includes('DM')) return '323';
+            return t;
+        };
+
+        const clientA = cleanStr(dragged.cliente);
+        const clientB = cleanStr(target.cliente);
+        const phoneA = (dragged.telefono || '').replace(/\D/g, '');
+        const phoneB = (target.telefono || '').replace(/\D/g, '');
+        const samePhone = Boolean(phoneA && phoneB && phoneA.length >= 7 && (phoneA.slice(-8) === phoneB.slice(-8)));
+
+        const sameClient = samePhone || clientA === clientB || 
+            (clientA.length >= 4 && clientB.length >= 4 && (clientA.includes(clientB) || clientB.includes(clientA))) ||
+            clientA.split(/\s+/).filter(w => w.length >= 3 && !['dr', 'dra', 'lic', 'licda'].includes(w)).some(w => clientB.includes(w));
+
+        const sameOffice = normOffice(dragged.oficina) === normOffice(target.oficina);
+        const sameDate = normDate(dragged.fecha) === normDate(target.fecha);
+        const sameRecordId = Boolean(
+            dragged.recordId && target.recordId && 
+            String(dragged.recordId).trim().length > 0 && 
+            String(dragged.recordId).trim() === String(target.recordId).trim()
+        );
+
+        return (sameClient && sameDate) || (sameClient && sameOffice) || sameRecordId;
+    };
+
+    const handleDragStart = (e: React.DragEvent<HTMLElement>, payment: Payment) => {
         if (isSelectionMode) return;
+        e.dataTransfer.effectAllowed = 'copyMove';
         e.dataTransfer.setData('paymentId', payment.id);
-        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', payment.id);
         setDraggedId(payment.id);
     };
 
@@ -127,28 +176,29 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
         e.preventDefault();
         if (isSelectionMode) return;
         
-        // Si se está arrastrando una tarjeta de pago de Excel huérfano
-        const hasUnmatched = e.dataTransfer.types.includes('unmatchedpayment') || e.dataTransfer.types.includes('text/plain');
-        if (hasUnmatched || !draggedId) {
+        const isFromUnmatched = e.dataTransfer.types.includes('unmatchedpayment');
+        if (isFromUnmatched && !draggedId) {
             setDropTargetInfo({ id: targetPayment.id, isValid: true, isUnmatched: true });
             return;
         }
 
-        if (!draggedPayment || draggedPayment.id === targetPayment.id) {
-            setDropTargetInfo(null);
-            return;
+        if (draggedPayment && draggedPayment.id !== targetPayment.id) {
+            const isValid = isMergeableWithTarget(draggedPayment, targetPayment);
+            setDropTargetInfo({ id: targetPayment.id, isValid, isUnmatched: false });
+        } else if (!draggedPayment && !isFromUnmatched && !draggedId) {
+            setDropTargetInfo({ id: targetPayment.id, isValid: true, isUnmatched: true });
         }
-        const isValid = draggedPayment.cliente === targetPayment.cliente && draggedPayment.oficina === targetPayment.oficina && draggedPayment.fecha === targetPayment.fecha;
-        setDropTargetInfo({ id: targetPayment.id, isValid, isUnmatched: false });
     };
     
     const handleDragOver = (e: React.DragEvent<HTMLTableRowElement>) => {
         e.preventDefault();
-        e.dataTransfer.dropEffect = 'copy';
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
     };
 
     const handleDrop = (e: React.DragEvent<HTMLTableRowElement>, targetPayment: Payment) => {
         e.preventDefault();
+        e.stopPropagation();
         if (isSelectionMode) return;
 
         // 1. ¿Se soltó un pago huérfano de Excel sobre esta cita?
@@ -156,21 +206,21 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
         if (rawUnmatched && onMatchUnmatched) {
             try {
                 const unmatchedObj = JSON.parse(rawUnmatched);
-                onMatchUnmatched(unmatchedObj, targetPayment.id);
+                if (unmatchedObj && (unmatchedObj.cliente || unmatchedObj.monto || unmatchedObj.id)) {
+                    onMatchUnmatched(unmatchedObj, targetPayment.id);
+                    setDraggedId(null);
+                    setDropTargetInfo(null);
+                    return;
+                }
             } catch (err) {
-                console.error('Error parseando pago huérfano arrastrado:', err);
+                // Not unmatched JSON
             }
-            setDraggedId(null);
-            setDropTargetInfo(null);
-            return;
         }
 
-        // 2. O es una fusión de citas existentes
-        if (dropTargetInfo?.isValid) {
-            const droppedPaymentId = e.dataTransfer.getData('paymentId');
-            if (droppedPaymentId && droppedPaymentId !== targetPayment.id) {
-                onMerge(droppedPaymentId, targetPayment.id);
-            }
+        // 2. Fusión de citas existentes
+        const droppedPaymentId = e.dataTransfer.getData('paymentId') || e.dataTransfer.getData('text/plain') || draggedId;
+        if (droppedPaymentId && droppedPaymentId !== targetPayment.id) {
+            onMerge(droppedPaymentId, targetPayment.id);
         }
         setDraggedId(null);
         setDropTargetInfo(null);
@@ -218,7 +268,7 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                 <table className="w-full min-w-[1000px] text-sm text-left text-[#3c4043]">
                     <thead className="bg-[#f8fafd] text-[11px] font-bold text-[#5f6368] uppercase tracking-wider border-b border-[#e0e3e7]">
                         <tr>
-                            {isSelectionMode && (
+                            {isSelectionMode ? (
                                 <th scope="col" className="px-5 py-3.5 w-10">
                                     <input 
                                         type="checkbox" 
@@ -226,6 +276,10 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                                         checked={payments.length > 0 && selectedIds.size === payments.length}
                                         onChange={onSelectAll}
                                     />
+                                </th>
+                            ) : (
+                                <th scope="col" className="w-8 px-2 py-3.5 text-center text-slate-400" title="Arrastrar para fusionar citas">
+                                    <span className="sr-only">Fusionar</span>
                                 </th>
                             )}
                             <th scope="col" className="px-5 py-3.5">Cliente</th>
@@ -242,7 +296,7 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                     <tbody className="divide-y divide-[#f1f3f4]">
                         {payments.length === 0 ? (
                             <tr>
-                                <td colSpan={isSelectionMode ? 10 : 9} className="text-center py-12 text-[#5f6368]">
+                                <td colSpan={10} className="text-center py-12 text-[#5f6368]">
                                     <div className="flex flex-col items-center justify-center">
                                         <svg className="w-12 h-12 text-[#bdc1c6] mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -279,10 +333,9 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                                     onDrop={(e) => handleDrop(e, p)}
                                     onDragEnd={handleDragEnd}
                                     onClick={() => isSelectionMode && onSelectPayment(p.id)}
-                                    style={{ cursor: isSelectionMode ? 'pointer' : 'grab' }}
-                                    className={`transition-colors duration-150 ${isSelected ? 'bg-blue-50/80' : (p.revisado ? 'bg-blue-50/30' : 'bg-white')} hover:bg-[#f8fafd] ${draggingClass} ${dropIndicatorClass}`}
+                                    className={`transition-colors duration-150 select-none ${isSelected ? 'bg-blue-50/80' : (p.revisado ? 'bg-blue-50/30' : 'bg-white')} hover:bg-[#f8fafd] ${draggingClass} ${dropIndicatorClass}`}
                                 >
-                                    {isSelectionMode && (
+                                    {isSelectionMode ? (
                                         <td className="px-5 py-3.5">
                                             <input 
                                                 type="checkbox" 
@@ -290,6 +343,20 @@ const PaymentTable: React.FC<PaymentTableProps> = ({
                                                 checked={isSelected}
                                                 readOnly
                                             />
+                                        </td>
+                                    ) : (
+                                        <td 
+                                            className="w-8 px-2 py-3.5 text-center text-slate-300 hover:text-blue-600 cursor-grab active:cursor-grabbing"
+                                            title="Arrastra esta fila sobre otra cita de la misma persona para fusionarlas"
+                                        >
+                                            <svg className="w-4 h-4 mx-auto" viewBox="0 0 24 24" fill="currentColor">
+                                                <circle cx="9" cy="6" r="1.5" />
+                                                <circle cx="15" cy="6" r="1.5" />
+                                                <circle cx="9" cy="12" r="1.5" />
+                                                <circle cx="15" cy="12" r="1.5" />
+                                                <circle cx="9" cy="18" r="1.5" />
+                                                <circle cx="15" cy="18" r="1.5" />
+                                            </svg>
                                         </td>
                                     )}
                                     <td className="px-5 py-3.5">

@@ -5,6 +5,9 @@ import {
   saveGoogleSheetsConfig, 
   sendPaymentToGoogleSheets, 
   syncAllPaymentsToGoogleSheets,
+  repairGoogleSheetsHeaders,
+  CLEAN_HEADERS_TSV,
+  CLEAN_HEADERS_ARRAY,
   GOOGLE_APPS_SCRIPT_TEMPLATE 
 } from '../services/googleSheetsService';
 
@@ -22,6 +25,9 @@ const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, onClose, 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [syncAllResult, setSyncAllResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [copiedHeaders, setCopiedHeaders] = useState(false);
+  const [repairingHeaders, setRepairingHeaders] = useState(false);
+  const [repairResult, setRepairResult] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -29,10 +35,35 @@ const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, onClose, 
       setWebhookUrl(config.webhookUrl || '');
       setTestResult(null);
       setSyncAllResult(null);
+      setRepairResult(null);
       setSavedSuccess(false);
       setCopiedScript(false);
+      setCopiedHeaders(false);
     }
   }, [isOpen]);
+
+  const handleCopyHeaders = () => {
+    navigator.clipboard.writeText(CLEAN_HEADERS_TSV);
+    setCopiedHeaders(true);
+    setTimeout(() => setCopiedHeaders(false), 3000);
+  };
+
+  const handleRepairHeaders = async () => {
+    if (!webhookUrl.trim()) {
+      setRepairResult({
+        success: false,
+        message: 'Ingresa la URL del Webhook para reparar los encabezados automáticamente, o cópialos con el botón de copiar.',
+      });
+      return;
+    }
+
+    setRepairingHeaders(true);
+    setRepairResult(null);
+
+    const res = await repairGoogleSheetsHeaders(webhookUrl.trim());
+    setRepairingHeaders(false);
+    setRepairResult(res);
+  };
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_TEMPLATE);
@@ -193,6 +224,75 @@ const GoogleSheetsModal: React.FC<GoogleSheetsModalProps> = ({ isOpen, onClose, 
                 {GOOGLE_APPS_SCRIPT_TEMPLATE}
               </pre>
             </div>
+          </div>
+
+          {/* Clean Headers Section */}
+          <div className="p-4 bg-blue-50/70 border border-blue-200 rounded-2xl space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-xs font-bold text-blue-950 uppercase tracking-wider flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                  </svg>
+                  Encabezados Limpios (14 Columnas en Orden)
+                </h4>
+                <p className="text-[11px] text-blue-800 mt-0.5">
+                  Estructura optimizada con la columna <strong>Teléfono</strong> (Columna 4 / D) junto a Cliente para conciliación exacta por teléfono, oficina y fecha.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleCopyHeaders}
+                  className="px-3 py-1.5 bg-white hover:bg-blue-100 text-blue-800 border border-blue-300 text-xs font-semibold rounded-lg shadow-xs transition flex items-center gap-1.5"
+                >
+                  {copiedHeaders ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 text-emerald-600" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                      <span className="text-emerald-700 font-bold">¡Copiado!</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3.5 h-3.5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" />
+                      </svg>
+                      <span>Copiar Fila 1 (Pegar en A1)</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleRepairHeaders}
+                  disabled={repairingHeaders || !webhookUrl.trim()}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold rounded-lg shadow-xs transition flex items-center gap-1.5"
+                >
+                  {repairingHeaders ? 'Reparando...' : 'Reparar Sheet Automático'}
+                </button>
+              </div>
+            </div>
+
+            {/* List of 13 clean columns */}
+            <div className="flex flex-wrap gap-1.5 text-[11px] pt-1">
+              {CLEAN_HEADERS_ARRAY.map((h, i) => (
+                <span key={h} className="px-2 py-0.5 bg-white text-blue-900 font-medium rounded border border-blue-200 shadow-2xs">
+                  <strong className="text-blue-500 mr-1 font-mono">{i + 1}.</strong>{h}
+                </span>
+              ))}
+            </div>
+
+            {repairResult && (
+              <div className={`p-2.5 rounded-lg border text-xs flex items-center gap-2 mt-2 ${
+                repairResult.success 
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                  : 'bg-rose-50 border-rose-200 text-rose-800'
+              }`}>
+                <span>{repairResult.message}</span>
+              </div>
+            )}
           </div>
 
           {/* Webhook Input */}
