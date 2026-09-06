@@ -939,13 +939,13 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                         </div>
 
                         {/* Fecha de Uso */}
-                        <div className="w-full sm:w-32 shrink-0">
+                        <div className="w-full sm:w-32 sm:shrink-0 min-w-0">
                           <input
                             type="date"
                             value={row.fechaServicio}
                             onChange={(e) => handleUpdateRowFecha(row.id, e.target.value)}
                             required
-                            className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            className="w-full max-w-full box-border px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none [appearance:none] [-webkit-appearance:none]"
                           />
                         </div>
 
