@@ -16,15 +16,6 @@ body {
   -webkit-text-size-adjust: 100%;
 }
 
-/* Prevent iOS Safari auto-zoom on inputs and selects when focused */
-@media screen and (max-width: 768px) {
-  input,
-  select,
-  textarea {
-    font-size: 16px !important;
-  }
-}
-
 /* Ensure date inputs never overflow their container and render cleanly on iOS Safari */
 input[type="date"] {
   display: block;
