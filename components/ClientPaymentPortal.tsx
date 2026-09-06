@@ -43,7 +43,7 @@ const OFFICES: { id: Oficina; label: string }[] = [
   { id: Oficina.O203B, label: 'Oficina 203B' },
   { id: Oficina.O211B, label: 'Oficina 211B' },
   { id: Oficina.O232B, label: 'Oficina 232B' },
-  { id: Oficina.O323, label: 'Oficina 323 (Vitalé)' },
+  { id: Oficina.O323, label: 'Oficina 323' },
 ];
 
 const ADMIN_PINS = ['1823'];
@@ -563,7 +563,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       </header>
 
       {/* Main Container */}
-      <main className="max-w-3xl w-full mx-auto px-4 py-8 flex-1">
+      <main className="max-w-3xl w-full mx-auto px-3 sm:px-6 py-5 sm:py-8 flex-1">
         {submittedData ? (
           /* Confirmation Screen */
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 text-center animate-in fade-in zoom-in-95 duration-150">
@@ -673,7 +673,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
         ) : (
           /* Main Clean Form with Exact Order Requested */
           <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden divide-y divide-slate-100">
-            <div className="p-6 sm:p-8 space-y-6">
+            <div className="p-4 sm:p-8 space-y-5 sm:space-y-6">
               
               {/* 1. Nombre Completo o Empresa with Autocomplete & Pending Appointment Suggestion */}
               <div className="relative" ref={clientInputContainerRef}>
@@ -728,7 +728,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     placeholder="Escribe tu nombre o nombre de empresa..."
                     required
                     autoComplete="off"
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-sm font-medium transition pr-10"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-base sm:text-sm font-medium transition pr-10"
                   />
 
                   {cliente && (
@@ -843,7 +843,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     placeholder="Ej. 5555-1234"
                     maxLength={15}
                     required
-                    className="w-full pl-24 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-sm font-medium transition"
+                    className="w-full pl-24 pr-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-base sm:text-sm font-medium transition"
                   />
                 </div>
               </div>
@@ -916,19 +916,19 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                 </div>
 
                 {/* Filas delgadas y compactas para teléfono */}
-                <div className="space-y-2">
+                <div className="space-y-2.5">
                   {rows.map((row) => (
                     <div
                       key={row.id}
-                      className="p-2.5 bg-slate-50 border border-slate-200 rounded-xl transition hover:border-slate-300"
+                      className="p-3 bg-slate-50 border border-slate-200 rounded-xl transition hover:border-slate-300 overflow-hidden"
                     >
-                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full min-w-0">
                         {/* Selector de Oficina */}
-                        <div className="flex-1 min-w-[130px]">
+                        <div className="w-full sm:flex-1 min-w-0">
                           <select
                             value={row.oficina}
                             onChange={(e) => handleUpdateRowOficina(row.id, e.target.value as Oficina)}
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            className="block w-full min-w-0 box-border px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-base sm:text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           >
                             {OFFICES.map((ofc) => (
                               <option key={ofc.id} value={ofc.id}>
@@ -939,40 +939,40 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                         </div>
 
                         {/* Fecha de Uso */}
-                        <div className="w-full sm:w-36">
+                        <div className="w-full sm:w-36 min-w-0">
                           <input
                             type="date"
                             value={row.fechaServicio}
                             onChange={(e) => handleUpdateRowFecha(row.id, e.target.value)}
                             required
-                            className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-semibold focus:ring-1 focus:ring-blue-500 focus:outline-none"
+                            className="block w-full min-w-0 box-border px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-base sm:text-xs font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none text-center"
                           />
                         </div>
 
                         {/* Horas Utilizadas + Subtotal + Eliminar */}
-                        <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
-                          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden h-[32px]">
+                        <div className="flex items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-0.5 sm:pt-0">
+                          <div className="flex items-center border border-slate-300 rounded-lg bg-white overflow-hidden h-[36px] sm:h-[32px]">
                             <button
                               type="button"
                               onClick={() => handleDecrementRowHours(row.id)}
                               disabled={row.horas <= 1}
-                              className="px-2 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-xs"
+                              className="px-3 sm:px-2 text-slate-600 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed font-bold text-sm sm:text-xs"
                             >
                               -
                             </button>
-                            <span className="px-2 text-center text-xs font-bold text-slate-900 whitespace-nowrap min-w-[40px]">
+                            <span className="px-2.5 sm:px-2 text-center text-sm sm:text-xs font-bold text-slate-900 whitespace-nowrap min-w-[42px] sm:min-w-[40px]">
                               {row.horas} hr{row.horas > 1 ? 's' : ''}
                             </span>
                             <button
                               type="button"
                               onClick={() => handleIncrementRowHours(row.id)}
-                              className="px-2 text-slate-600 hover:bg-slate-100 font-bold text-xs"
+                              className="px-3 sm:px-2 text-slate-600 hover:bg-slate-100 font-bold text-sm sm:text-xs"
                             >
                               +
                             </button>
                           </div>
 
-                          <span className="text-xs font-bold text-slate-700 min-w-[70px] text-right">
+                          <span className="text-sm sm:text-xs font-bold text-slate-700 min-w-[70px] text-right">
                             {formatCurrency(row.horas * HOURLY_RATE)}
                           </span>
 
@@ -980,7 +980,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                             <button
                               type="button"
                               onClick={() => handleRemoveRow(row.id)}
-                              className="text-slate-400 hover:text-red-600 p-1 rounded transition cursor-pointer"
+                              className="text-slate-400 hover:text-red-600 p-1.5 sm:p-1 rounded transition cursor-pointer"
                               title="Eliminar fila"
                             >
                               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -1019,7 +1019,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
             </div>
 
             {/* 6. Submit Button & Footer */}
-            <div className="p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="p-4 sm:p-6 bg-slate-50 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
               <div className="text-xs text-slate-500 text-center sm:text-left">
                 Al enviar, su comprobante queda registrado de forma segura.
               </div>
