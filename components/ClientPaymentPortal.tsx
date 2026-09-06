@@ -56,7 +56,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
   // Form State
   const [cliente, setCliente] = useState('');
   const [telefono, setTelefono] = useState('');
-  const [phoneAutoDetected, setPhoneAutoDetected] = useState(false);
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [highlightedIndex, setHighlightedIndex] = useState(-1);
   const clientInputContainerRef = useRef<HTMLDivElement>(null);
@@ -164,7 +163,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     const knownPhone = clientPhoneMap.get(normalizeText(name));
     if (knownPhone) {
       setTelefono(knownPhone);
-      setPhoneAutoDetected(true);
     }
   }, [clientPhoneMap]);
 
@@ -185,7 +183,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 
     if (apt.telefono && apt.telefono.trim()) {
       setTelefono(apt.telefono.trim());
-      setPhoneAutoDetected(true);
     }
   };
 
@@ -407,16 +404,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     }
 
     setIsSubmitting(true);
-
-    // Guardar número de teléfono en el directorio local para autocompletado futuro
-    if (cliente.trim() && telefono.trim()) {
-      try {
-        const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-        const dir = JSON.parse(rawDir);
-        dir[cliente.trim()] = telefono.trim();
-        localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
-      } catch {}
-    }
 
     // 1. Subir comprobante a Cloudinary para obtener una URL pública HTTPS inmediata
     let hostedComprobanteUrl = '';
@@ -837,23 +824,9 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
 
               {/* 2. Número de Teléfono / WhatsApp */}
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label htmlFor="telefono-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                    2. Número de Teléfono / WhatsApp <span className="text-red-500">*</span>
-                  </label>
-                  {phoneAutoDetected ? (
-                    <span className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
-                      <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                      </svg>
-                      Número detectado automáticamente
-                    </span>
-                  ) : (
-                    <span className="text-[11px] text-slate-400">
-                      
-                    </span>
-                  )}
-                </div>
+                <label htmlFor="telefono-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  2. Número de Teléfono / WhatsApp <span className="text-red-500">*</span>
+                </label>
 
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
@@ -866,10 +839,7 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                     id="telefono-input"
                     type="tel"
                     value={telefono}
-                    onChange={(e) => {
-                      setTelefono(e.target.value);
-                      setPhoneAutoDetected(false);
-                    }}
+                    onChange={(e) => setTelefono(e.target.value)}
                     placeholder="Ej. 5555-1234"
                     maxLength={15}
                     required

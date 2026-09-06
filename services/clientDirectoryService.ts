@@ -241,13 +241,5 @@ export async function fetchLiveClientDirectory(force = false): Promise<ClientDir
 function saveDirectoryToCache(clients: ClientDirectoryItem[]) {
   try {
     localStorage.setItem(ONEDAY_CLIENT_DIRECTORY_CACHE_KEY, JSON.stringify(clients));
-    const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-    const dir = JSON.parse(rawDir);
-    clients.forEach((c: ClientDirectoryItem) => {
-      if (c.nombre && c.telefono) {
-        dir[c.nombre.trim()] = c.telefono.trim();
-      }
-    });
-    localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
   } catch {}
 }

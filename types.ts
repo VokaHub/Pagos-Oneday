@@ -100,18 +100,3 @@ export const OFFICE_OWNERS: Record<Oficina, string> = {
   [Oficina.O232B]: OWNER_CAROLINA_ORTEGA,
   [Oficina.O323]: OWNER_CAROLINA_ORTEGA,
 };
-
-export const BANK_DETAILS: { [key: string]: BankAccountInfo } = {
-  [OWNER_CAROLINA_ORTEGA]: {
-    bank: 'Banco Industrial',
-    accountName: 'Carolina Ortega',
-    accountNumber: '7500016162',
-    accountType: 'Monetaria',
-  },
-  [OWNER_SERGIO_ORTIZ]: {
-    bank: 'Banco Industrial',
-    accountName: 'Sergio Ortiz',
-    accountNumber: '3250058298',
-    accountType: 'Monetaria',
-  },
-};

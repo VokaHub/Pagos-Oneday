@@ -630,16 +630,6 @@ const App: React.FC = () => {
                         updatedNotas = `${updatedNotas} | Cubierto por boleta de ${spTotalH} hrs`.trim();
                     }
 
-                    // Si el pago de Excel incluye teléfono, actualizarlo en el directorio local de clientes
-                    if (primarySp.cliente && primarySp.telefono) {
-                        try {
-                            const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                            const dir = JSON.parse(rawDir);
-                            dir[primarySp.cliente.trim()] = primarySp.telefono.trim();
-                            localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
-                        } catch {}
-                    }
-
                     return {
                         ...tApt.apt,
                         telefono: tApt.apt.telefono || primarySp.telefono,
@@ -1018,15 +1008,6 @@ const App: React.FC = () => {
             savedPayment = { ...paymentData, id: newId, revisado: false };
         }
 
-        if (savedPayment.cliente && savedPayment.telefono) {
-            try {
-                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                const dir = JSON.parse(rawDir);
-                dir[savedPayment.cliente.trim()] = savedPayment.telefono.trim();
-                localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
-            } catch {}
-        }
-
         setAppState(prevState => {
             const newPayments = editingPayment
                 ? prevState.payments.map(p => p.id === editingPayment.id ? savedPayment : p)
@@ -1330,20 +1311,6 @@ const App: React.FC = () => {
                                                          (Array.isArray(it.answers) ? it.answers.find((a: any) => /tel|phone|cel|whats/i.test(a.question || a.name || ''))?.value : undefined) ||
                                                          (Array.isArray(it.custom_fields) ? it.custom_fields.find((f: any) => /tel|phone|cel|whats/i.test(f.name || ''))?.value : undefined);
                                         let cleanPhone = rawPhone ? String(rawPhone).replace(/[^\d+]/g, '') : undefined;
-                                        if (!cleanPhone && name) {
-                                            try {
-                                                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                                                const dir = JSON.parse(rawDir);
-                                                if (dir[name]) cleanPhone = String(dir[name]).replace(/\D/g, '');
-                                            } catch {}
-                                        } else if (cleanPhone && name) {
-                                            try {
-                                                const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                                                const dir = JSON.parse(rawDir);
-                                                dir[name] = cleanPhone;
-                                                localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
-                                            } catch {}
-                                        }
 
                                         return {
                                             id: `sm-json-${it.id || it.uuid || idx}-${Date.now()}`,
@@ -1462,25 +1429,6 @@ const App: React.FC = () => {
                             const telefonoRaw = findValue(['telefono', 'clientphonenumber', 'phone', 'phonenumber', 'telephone', 'celular', 'movil', 'mobile', 'whatsapp', 'clientphone']);
                             let telefono = telefonoRaw ? String(telefonoRaw).replace(/\D/g, '') : undefined;
 
-                            // Si no vino en el archivo, intentar autocompletar desde el directorio local guardado
-                            const clientNameClean = String(cliente).trim();
-                            if (!telefono && clientNameClean) {
-                                try {
-                                    const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                                    const dir = JSON.parse(rawDir);
-                                    if (dir[clientNameClean]) {
-                                        telefono = String(dir[clientNameClean]).replace(/\D/g, '');
-                                    }
-                                } catch {}
-                            } else if (telefono && clientNameClean) {
-                                try {
-                                    const rawDir = localStorage.getItem('oneday_client_phone_directory') || '{}';
-                                    const dir = JSON.parse(rawDir);
-                                    dir[clientNameClean] = telefono;
-                                    localStorage.setItem('oneday_client_phone_directory', JSON.stringify(dir));
-                                } catch {}
-                            }
-                            
                             const initialNotas = findValue(['nota']);
 
                             const extraData: string[] = [];
