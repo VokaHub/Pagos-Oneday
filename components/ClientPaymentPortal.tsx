@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
-import { Oficina, EstadoPago, Payment, OFFICE_BANK_DETAILS, BankAccountInfo, DEFAULT_CLIENTS_LIST } from '../types';
+import { Oficina, EstadoPago, Payment, OFFICE_BANK_DETAILS, BankAccountInfo } from '../types';
 import { sendPaymentToGoogleSheets, ClientPaymentSubmission } from '../services/googleSheetsService';
 import { uploadReceiptToCloudinary } from '../services/cloudinaryService';
 import { fetchLiveClientDirectory, ClientDirectoryItem } from '../services/clientDirectoryService';
@@ -98,29 +98,21 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
   ]);
   const [comprobanteImg, setComprobanteImg] = useState<string | undefined>(undefined);
 
-  // Client suggestions from default list, live Google Forms directory & real payments
+  // Clientes leídos estrictamente del Excel / formulario de Google Forms
   const allKnownClients = useMemo(() => {
-    const list = new Set<string>(DEFAULT_CLIENTS_LIST.filter(n => n && n.trim().length > 2));
-    
-    // Agregar clientes del formulario de Google Forms
+    const list = new Set<string>();
     directoryClients.forEach(c => {
       if (c.nombre && c.nombre.trim().length > 2) {
         list.add(c.nombre.trim());
       }
     });
+    return Array.from(list).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [directoryClients]);
 
-    allPayments.forEach(p => {
-      if (p.cliente && p.cliente.trim().length > 2) {
-        list.add(p.cliente.trim());
-      }
-    });
-    return Array.from(list);
-  }, [allPayments, directoryClients]);
-
-  // Filtered client suggestions
+  // Sugerencias filtradas (solo cuando el usuario comienza a escribir al menos 2 letras)
   const clientSuggestions = useMemo(() => {
     const trimmed = cliente.trim();
-    if (!trimmed) return allKnownClients.slice(0, 8);
+    if (!trimmed || trimmed.length < 2) return [];
     const norm = normalizeText(trimmed);
     return allKnownClients
       .filter((n) => normalizeText(n).includes(norm))
@@ -151,40 +143,19 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
     return matching[0];
   }, [cliente, allPayments]);
 
-  // Phone directory from allPayments, directoryClients (Google Forms) and localStorage
+  // Directorio de teléfonos tomado estrictamente de la base de datos de Google Forms
   const clientPhoneMap = useMemo(() => {
     const map = new Map<string, string>();
-    try {
-      const saved = localStorage.getItem('oneday_client_phone_directory');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        Object.entries(parsed).forEach(([k, v]) => {
-          if (v && typeof v === 'string' && v.trim()) {
-            map.set(normalizeText(k), v.trim());
-          }
-        });
-      }
-    } catch {}
-
-    // Cargar teléfonos del directorio de Google Forms
     directoryClients.forEach(c => {
       if (c.nombre && c.telefono && c.telefono.trim()) {
         const norm = normalizeText(c.nombre);
         map.set(norm, c.telefono.trim());
       }
     });
-
-    allPayments.forEach(p => {
-      if (p.cliente && p.telefono && p.telefono.trim()) {
-        const norm = normalizeText(p.cliente);
-        if (!map.has(norm)) {
-          map.set(norm, p.telefono.trim());
-        }
-      }
-    });
     return map;
-  }, [allPayments, directoryClients]);
+  }, [directoryClients]);
 
+  // Selección explícita del cliente: autollena el teléfono solo en este momento
   const selectClient = useCallback((name: string) => {
     setCliente(name);
     setShowClientSuggestions(false);
@@ -196,17 +167,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
       setPhoneAutoDetected(true);
     }
   }, [clientPhoneMap]);
-
-  // Auto-detect phone if user types matching client name and phone is empty or was auto-detected
-  useEffect(() => {
-    const trimmed = cliente.trim();
-    if (!trimmed) return;
-    const knownPhone = clientPhoneMap.get(normalizeText(trimmed));
-    if (knownPhone && (!telefono || phoneAutoDetected)) {
-      setTelefono(knownPhone);
-      setPhoneAutoDetected(true);
-    }
-  }, [cliente, clientPhoneMap, telefono, phoneAutoDetected]);
 
   // Apply suggested unpaid appointment to form
   const handleApplySuggestedAppointment = (apt: Payment) => {
@@ -837,11 +797,6 @@ const ClientPaymentPortal: React.FC<ClientPaymentPortalProps> = ({
                             </span>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-medium">{name}</span>
-                              {clientPhoneMap.get(normalizeText(name)) && (
-                                <span className={`text-[11px] font-normal ${isHighlighted ? 'text-blue-700' : 'text-slate-400'}`}>
-                                  • 📞 {clientPhoneMap.get(normalizeText(name))}
-                                </span>
-                              )}
                             </div>
                           </div>
 

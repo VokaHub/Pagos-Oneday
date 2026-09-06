@@ -115,8 +115,3 @@ export const BANK_DETAILS: { [key: string]: BankAccountInfo } = {
     accountType: 'Monetaria',
   },
 };
-
-// Lista de clientes frecuentes para autocompletado rápido
-export const DEFAULT_CLIENTS_LIST: string[] = [
-  
-];

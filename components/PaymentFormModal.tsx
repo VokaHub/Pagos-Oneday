@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Payment, Oficina, EstadoPago, DEFAULT_CLIENTS_LIST } from '../types';
+import { Payment, Oficina, EstadoPago } from '../types';
 import ImageViewerModal from './ImageViewerModal';
+import { fetchLiveClientDirectory, ClientDirectoryItem } from '../services/clientDirectoryService';
 
 interface PaymentFormModalProps {
     isOpen: boolean;
@@ -47,6 +48,17 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ isOpen, onClose, on
     const [formData, setFormData] = useState<FormDataType>({ ...initialFormState });
     const [isDragging, setIsDragging] = useState(false);
     const [isViewerOpen, setIsViewerOpen] = useState(false);
+    const [directoryClients, setDirectoryClients] = useState<ClientDirectoryItem[]>([]);
+
+    useEffect(() => {
+        if (isOpen) {
+            fetchLiveClientDirectory().then(clients => {
+                if (clients && clients.length > 0) {
+                    setDirectoryClients(clients);
+                }
+            });
+        }
+    }, [isOpen]);
 
     useEffect(() => {
         if (payment) {
@@ -65,6 +77,13 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ isOpen, onClose, on
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         let newFormData = { ...formData, [name]: value };
+
+        if (name === 'cliente') {
+            const matched = directoryClients.find(c => c.nombre.toLowerCase().trim() === value.toLowerCase().trim());
+            if (matched && matched.telefono && !newFormData.telefono) {
+                newFormData.telefono = matched.telefono;
+            }
+        }
 
         if (!payment && name === 'oficina') {
             const newMonto = '65';
@@ -179,8 +198,8 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ isOpen, onClose, on
                                         className="w-full px-3.5 py-2.5 bg-[#f8fafd] border border-[#dadce0] rounded-xl text-sm text-[#202124] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#1a73e8] transition" 
                                     />
                                     <datalist id="admin-clients-list">
-                                        {DEFAULT_CLIENTS_LIST.map(name => (
-                                            <option key={name} value={name} />
+                                        {directoryClients.map(c => (
+                                            <option key={c.nombre} value={c.nombre} />
                                         ))}
                                     </datalist>
                                 </div>
